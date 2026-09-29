@@ -2339,3 +2339,149 @@ for outcome_name, outcome in psych_outcomes.items():
     print(offline_female)
 
     print("\nR² =", round(model.rsquared, 4))
+
+
+# ============================================================
+# FINAL RQ1 - FOCUSED MODEL
+# Selective Positive Self-presentation
+# -> Online / Offline Positive Self-image
+#
+# HOUWGT weighted
+# School-clustered standard errors
+# Controls: gender + subjective family SES
+# ============================================================
+
+rq1_focus_vars = [
+    "selective_presentation_score",
+    "online_self_image_score",
+    "offline_self_image_score",
+    "bs1",
+    "bs3",
+    "HOUWGT",
+    "nschool_id"
+]
+
+rq1_focus = topic1[rq1_focus_vars].copy()
+
+
+# ------------------------------------------------------------
+# 1. Handle special / invalid values
+# ------------------------------------------------------------
+
+# Gender: 1 = female, 2 = male
+rq1_focus["bs1"] = rq1_focus["bs1"].where(
+    rq1_focus["bs1"].isin([1, 2])
+)
+
+# Subjective family social status: valid range 1–10
+rq1_focus["bs3"] = rq1_focus["bs3"].where(
+    rq1_focus["bs3"].between(1, 10)
+)
+
+# Weight must be positive
+rq1_focus["HOUWGT"] = rq1_focus["HOUWGT"].where(
+    rq1_focus["HOUWGT"] > 0
+)
+
+rq1_focus = rq1_focus.dropna()
+
+
+# ------------------------------------------------------------
+# 2. Recode gender
+# female = 1, male = 0
+# ------------------------------------------------------------
+
+rq1_focus["female"] = (
+    rq1_focus["bs1"] == 1
+).astype(int)
+
+
+# ------------------------------------------------------------
+# 3. Standardize continuous variables
+# ------------------------------------------------------------
+
+for col in [
+    "selective_presentation_score",
+    "online_self_image_score",
+    "offline_self_image_score",
+    "bs3"
+]:
+    rq1_focus[col + "_z"] = (
+        rq1_focus[col] - rq1_focus[col].mean()
+    ) / rq1_focus[col].std()
+
+
+# ------------------------------------------------------------
+# 4. Online Positive Self-image
+# ------------------------------------------------------------
+
+rq1_focus_online = smf.wls(
+    """
+    online_self_image_score_z ~
+    selective_presentation_score_z +
+    female +
+    bs3_z
+    """,
+    data=rq1_focus,
+    weights=rq1_focus["HOUWGT"]
+).fit(
+    cov_type="cluster",
+    cov_kwds={
+        "groups": rq1_focus["nschool_id"]
+    }
+)
+
+
+# ------------------------------------------------------------
+# 5. Offline Positive Self-image
+# ------------------------------------------------------------
+
+rq1_focus_offline = smf.wls(
+    """
+    offline_self_image_score_z ~
+    selective_presentation_score_z +
+    female +
+    bs3_z
+    """,
+    data=rq1_focus,
+    weights=rq1_focus["HOUWGT"]
+).fit(
+    cov_type="cluster",
+    cov_kwds={
+        "groups": rq1_focus["nschool_id"]
+    }
+)
+
+
+# ------------------------------------------------------------
+# 6. Print results
+# ------------------------------------------------------------
+
+print("\n" + "=" * 70)
+print("FINAL RQ1A: Selective Presentation -> Online Self-image")
+print("=" * 70)
+
+print(
+    rq1_focus_online
+    .summary2()
+    .tables[1]
+    .round(4)
+)
+
+print("N =", int(rq1_focus_online.nobs))
+print("R² =", round(rq1_focus_online.rsquared, 4))
+
+
+print("\n" + "=" * 70)
+print("FINAL RQ1B: Selective Presentation -> Offline Self-image")
+print("=" * 70)
+
+print(
+    rq1_focus_offline
+    .summary2()
+    .tables[1]
+    .round(4)
+)
+
+print("N =", int(rq1_focus_offline.nobs))
+print("R² =", round(rq1_focus_offline.rsquared, 4))

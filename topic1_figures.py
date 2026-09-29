@@ -396,3 +396,199 @@ plt.savefig(
 )
 
 plt.show()
+
+
+# ============================================================
+# FIGURE 1
+# Selective Positive Self-presentation
+# and Online / Offline Positive Self-image
+# ============================================================
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+# ------------------------------------------------------------
+# Final RQ1 focused-model coefficients
+# ------------------------------------------------------------
+
+online_intercept = 0.0201
+online_beta = 0.4477
+
+offline_intercept = 0.0483
+offline_beta = 0.1949
+
+
+# ------------------------------------------------------------
+# X values
+# ------------------------------------------------------------
+
+x = np.linspace(-2, 2, 200)
+
+online_pred = online_intercept + online_beta * x
+offline_pred = offline_intercept + offline_beta * x
+
+
+# ------------------------------------------------------------
+# Plot
+# ------------------------------------------------------------
+
+fig, ax = plt.subplots(figsize=(9, 6))
+
+
+# Online
+ax.plot(
+    x,
+    online_pred,
+    linewidth=2.7,
+    color="tab:blue",
+    label="Online Positive Self-image"
+)
+
+
+# Offline
+ax.plot(
+    x,
+    offline_pred,
+    linewidth=2.7,
+    linestyle="--",
+    color="tab:red",                 # 改成紅色
+    label="Offline Positive Self-image"
+)
+
+
+# ------------------------------------------------------------
+# Reference lines
+# ------------------------------------------------------------
+
+ax.axhline(
+    0,
+    linestyle=":",
+    linewidth=1,
+    color="gray",
+    alpha=0.5
+)
+
+ax.axvline(
+    0,
+    linestyle=":",
+    linewidth=1,
+    color="gray",
+    alpha=0.5
+)
+
+
+# ------------------------------------------------------------
+# Labels
+# ------------------------------------------------------------
+
+ax.set_xlabel(
+    "Selective Positive Self-presentation (SD)",
+    fontsize=11
+)
+
+ax.set_ylabel(
+    "Predicted Positive Self-image (SD)",
+    fontsize=11
+)
+
+ax.set_title(
+    "Selective Self-presentation and\n"
+    "Online vs. Offline Positive Self-image",
+    fontsize=14,
+    pad=12
+)
+
+
+# ------------------------------------------------------------
+# X-axis
+# ------------------------------------------------------------
+
+ax.set_xticks([-2, -1, 0, 1, 2])
+
+ax.set_xticklabels([
+    "−2 SD",
+    "−1 SD",
+    "Mean",
+    "+1 SD",
+    "+2 SD"
+])
+
+
+# ------------------------------------------------------------
+# Coefficient annotations
+# ------------------------------------------------------------
+
+# 放在右側，但不要壓在線上
+x_label = 1.25
+
+online_y = online_intercept + online_beta * x_label
+offline_y = offline_intercept + offline_beta * x_label
+
+
+ax.annotate(
+    "Online: β = .448",
+    xy=(x_label, online_y),
+    xytext=(12, 15),                 # 往右、往上移
+    textcoords="offset points",
+    fontsize=10,
+    color="tab:blue",
+    bbox=dict(
+        facecolor="white",
+        edgecolor="none",
+        alpha=0.8,
+        pad=2
+    )
+)
+
+
+ax.annotate(
+    "Offline: β = .195",
+    xy=(x_label, offline_y),
+    xytext=(12, -22),                # 往右、往下移
+    textcoords="offset points",
+    fontsize=10,
+    color="tab:red",
+    bbox=dict(
+        facecolor="white",
+        edgecolor="none",
+        alpha=0.8,
+        pad=2
+    )
+)
+
+
+# ------------------------------------------------------------
+# Legend
+# ------------------------------------------------------------
+
+ax.legend(
+    frameon=False,
+    loc="upper left",
+    fontsize=10
+)
+
+
+# ------------------------------------------------------------
+# Appearance
+# ------------------------------------------------------------
+
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+
+ax.tick_params(axis="both", labelsize=10)
+
+plt.tight_layout()
+
+
+# ------------------------------------------------------------
+# Save
+# ------------------------------------------------------------
+
+plt.savefig(
+    "figure1_selective_self_presentation.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.show()
