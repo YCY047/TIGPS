@@ -5,152 +5,269 @@ import numpy as np
 
 # ============================================================
 # FIGURE 1
-# RQ1 Standardized Coefficients
+# Selective Positive Self-presentation
+# → Online / Offline Positive Self-image
 # ============================================================
 
-data = pd.DataFrame({
-    "Predictor": [
-        "Schoolwork",
-        "Extra learning",
-        "Gaming",
-        "Entertainment",
-        "Chat / messaging",
-        "Interest browsing",
-        "Selective presentation"
-    ],
+# Read raw data for original-scale plotting
+df = pd.read_csv("TIGPSw2_s.csv", low_memory=False)
 
-    # Online Positive Self-image
-    "Online_beta": [
-        -0.0089,
-         0.0088,
-         0.0510,
-        -0.0323,
-         0.0773,
-         0.0325,
-         0.4255
-    ],
+# ------------------------------------------------------------
+# 1. Construct the three scales
+# ------------------------------------------------------------
 
-    "Online_low": [
-        -0.0415,   # approximate from SE
-        -0.0214,
-         0.0214,
-        -0.0712,
-         0.0476,
-        -0.0061,
-         0.4004
-    ],
+selective_vars = ["bs23a", "bs23b", "bs23c"]
+online_vars = ["bs25a", "bs25b", "bs25c"]
+offline_vars = ["bs25d", "bs25e", "bs25f"]
 
-    "Online_high": [
-         0.0237,
-         0.0390,
-         0.0805,
-         0.0066,
-         0.1071,
-         0.0711,
-         0.4505
-    ],
+# Special missing values → NaN
+for col in selective_vars + online_vars + offline_vars:
+    df[col] = df[col].where(df[col] > 0)
 
-    # Offline Positive Self-image
-    "Offline_beta": [
-         0.0025,
-         0.0100,
-        -0.0831,
-        -0.0619,
-         0.0328,
-         0.0198,
-         0.1961
-    ],
+df["selective_presentation_score"] = (
+    df[selective_vars].mean(axis=1)
+    .where(df[selective_vars].notna().sum(axis=1) == 3)
+)
 
-    "Offline_low": [
-        -0.0297,
-        -0.0184,
-        -0.1187,
-        -0.1055,
-         0.0001,
-        -0.0175,
-         0.1697
-    ],
+df["online_self_image_score"] = (
+    df[online_vars].mean(axis=1)
+    .where(df[online_vars].notna().sum(axis=1) == 3)
+)
 
-    "Offline_high": [
-         0.0347,
-         0.0384,
-        -0.0476,
-        -0.0184,
-         0.0655,
-         0.0571,
-         0.2226
+df["offline_self_image_score"] = (
+    df[offline_vars].mean(axis=1)
+    .where(df[offline_vars].notna().sum(axis=1) == 3)
+)
+
+# Prepare the same analytic sample as FINAL RQ1
+# ------------------------------------------------------------
+# Prepare the same analytic sample as FINAL RQ1
+# ------------------------------------------------------------
+
+# Convert variables to numeric
+for col in ["bs1", "bs3", "HOUWGT", "nschool_id"]:
+    df[col] = pd.to_numeric(
+        df[col],
+        errors="coerce"
+    )
+
+plot_data = df[
+    [
+        "selective_presentation_score",
+        "online_self_image_score",
+        "offline_self_image_score",
+        "bs1",
+        "bs3",
+        "HOUWGT",
+        "nschool_id"
     ]
-})
+].copy()
 
+# Gender: valid responses = 1, 2
+plot_data["bs1"] = plot_data["bs1"].where(
+    plot_data["bs1"].isin([1, 2])
+)
 
-# Reverse order so Selective presentation appears at top
-data = data.iloc[::-1].reset_index(drop=True)
+# Subjective family SES: valid range = 1–10
+plot_data["bs3"] = plot_data["bs3"].where(
+    plot_data["bs3"].between(1, 10)
+)
 
-y = np.arange(len(data))
+# Weight must be positive
+plot_data["HOUWGT"] = plot_data["HOUWGT"].where(
+    plot_data["HOUWGT"] > 0
+)
+
+plot_data = plot_data.dropna()
+
+print("Figure 1 analytic N =", len(plot_data))
+# ------------------------------------------------------------
+# 2. Means and SDs
+# ------------------------------------------------------------
+
+selective_mean = plot_data["selective_presentation_score"].mean()
+selective_sd = plot_data["selective_presentation_score"].std()
+
+online_mean = plot_data["online_self_image_score"].mean()
+online_sd = plot_data["online_self_image_score"].std()
+
+offline_mean = plot_data["offline_self_image_score"].mean()
+offline_sd = plot_data["offline_self_image_score"].std()
+
+# ------------------------------------------------------------
+# 3. Final standardized coefficients
+# ------------------------------------------------------------
+
+online_beta = 0.4477
+offline_beta = 0.1949
+
+# ------------------------------------------------------------
+# 4. Convert 1–4 selective-presentation scale to z
+# ------------------------------------------------------------
+
+x_raw = np.linspace(1, 4, 200)
+
+x_z = (
+    x_raw - selective_mean
+) / selective_sd
+
+# ------------------------------------------------------------
+# 5. Convert predicted standardized outcomes
+#    back to original 1–4 scales
+#
+# We focus on the slope here.
+# ------------------------------------------------------------
+online_intercept = 0.0201
+online_beta = 0.4477
+
+offline_intercept = 0.0483
+offline_beta = 0.1949
+
+online_pred_z = (
+    online_intercept
+    + online_beta * x_z
+)
+
+offline_pred_z = (
+    offline_intercept
+    + offline_beta * x_z
+)
+
+online_pred_raw = (
+    online_mean
+    +online_pred_z*online_sd
+)
+
+offline_pred_raw = (
+    offline_mean
+    + offline_pred_z*offline_sd
+)
+
+# ------------------------------------------------------------
+# 6. Plot
+# ------------------------------------------------------------
 
 fig, ax = plt.subplots(figsize=(9, 6))
 
-
-# ------------------------------------------------------------
-# Online coefficients
-# ------------------------------------------------------------
-
-ax.errorbar(
-    data["Online_beta"],
-    y + 0.12,
-    xerr=[
-        data["Online_beta"] - data["Online_low"],
-        data["Online_high"] - data["Online_beta"]
-    ],
-    fmt="o",
-    capsize=3,
+ax.plot(
+    x_raw,
+    online_pred_raw,
+    linewidth=3,
+    color="tab:blue",
     label="Online Positive Self-image"
 )
 
-
-# ------------------------------------------------------------
-# Offline coefficients
-# ------------------------------------------------------------
-
-ax.errorbar(
-    data["Offline_beta"],
-    y - 0.12,
-    xerr=[
-        data["Offline_beta"] - data["Offline_low"],
-        data["Offline_high"] - data["Offline_beta"]
-    ],
-    fmt="s",
-    capsize=3,
+ax.plot(
+    x_raw,
+    offline_pred_raw,
+    linewidth=3,
+    linestyle="--",
+    color="tab:red",
     label="Offline Positive Self-image"
 )
 
+# ------------------------------------------------------------
+# Axis
+# ------------------------------------------------------------
 
-# Zero reference line
-ax.axvline(
-    x=0,
-    linestyle="--",
-    linewidth=1
+ax.set_xlim(1, 4)
+ax.set_xticks(np.arange(1, 4.01, 0.5))
+
+ax.set_xticklabels([
+    "1\nLow",
+    "1.5",
+    "2",
+    "2.5",
+    "3",
+    "3.5",
+    "4\nHigh"
+])
+ax.set_ylim(1, 4)
+ax.set_yticks(np.arange(1, 4.01, 0.5))
+
+ax.set_xlabel(
+    "Selective Positive Self-presentation",
+    fontsize=12
 )
 
+ax.set_ylim(1, 4)
 
-# Labels
-ax.set_yticks(y)
-ax.set_yticklabels(data["Predictor"])
+ax.set_ylabel(
+    "Model-estimated Positive Self-image",
+    fontsize=12
+)
 
-ax.set_xlabel("Standardized regression coefficient (β)")
-ax.set_ylabel("")
+# ------------------------------------------------------------
+# Title
+# ------------------------------------------------------------
 
 ax.set_title(
-    "Digital Use, Selective Self-presentation,\n"
-    "and Positive Self-image"
+    "Selective Self-presentation and\n"
+    "Online vs. Offline Positive Self-image",
+    fontsize=14,
+    pad=12
 )
 
-ax.legend(frameon=False)
+# ------------------------------------------------------------
+# β labels
+# ------------------------------------------------------------
+
+ax.text(
+    3.05,
+    3.25,
+    "Online: β = .448",
+    color="tab:blue",
+    fontsize=11,
+    fontweight="bold",
+    ha="left",
+    va="center",
+    bbox=dict(
+        facecolor="white",
+        edgecolor="none",
+        alpha=0.85,
+        pad=3
+    )
+)
+
+ax.text(
+    3.05,
+    2.73,
+    "Offline: β = .195",
+    color="tab:red",
+    fontsize=11,
+    fontweight="bold",
+    ha="left",
+    va="center",
+    bbox=dict(
+        facecolor="white",
+        edgecolor="none",
+        alpha=0.85,
+        pad=2
+    )
+)
+
+# ------------------------------------------------------------
+# Appearance
+# ------------------------------------------------------------
+
+ax.legend(
+    frameon=False,
+    loc="upper left"
+)
+
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+
+ax.grid(
+    axis="y",
+    linestyle=":",
+    alpha=0.25
+)
 
 plt.tight_layout()
 
 plt.savefig(
-    "figure1_rq1_coefficients.png",
+    "figure1_selective_self_presentation.png",
     dpi=300,
     bbox_inches="tight"
 )
@@ -391,202 +508,6 @@ plt.tight_layout()
 
 plt.savefig(
     "figure3_gender_moderation.png",
-    dpi=300,
-    bbox_inches="tight"
-)
-
-plt.show()
-
-
-# ============================================================
-# FIGURE 1
-# Selective Positive Self-presentation
-# and Online / Offline Positive Self-image
-# ============================================================
-
-import numpy as np
-import matplotlib.pyplot as plt
-
-
-# ------------------------------------------------------------
-# Final RQ1 focused-model coefficients
-# ------------------------------------------------------------
-
-online_intercept = 0.0201
-online_beta = 0.4477
-
-offline_intercept = 0.0483
-offline_beta = 0.1949
-
-
-# ------------------------------------------------------------
-# X values
-# ------------------------------------------------------------
-
-x = np.linspace(-2, 2, 200)
-
-online_pred = online_intercept + online_beta * x
-offline_pred = offline_intercept + offline_beta * x
-
-
-# ------------------------------------------------------------
-# Plot
-# ------------------------------------------------------------
-
-fig, ax = plt.subplots(figsize=(9, 6))
-
-
-# Online
-ax.plot(
-    x,
-    online_pred,
-    linewidth=2.7,
-    color="tab:blue",
-    label="Online Positive Self-image"
-)
-
-
-# Offline
-ax.plot(
-    x,
-    offline_pred,
-    linewidth=2.7,
-    linestyle="--",
-    color="tab:red",                 # 改成紅色
-    label="Offline Positive Self-image"
-)
-
-
-# ------------------------------------------------------------
-# Reference lines
-# ------------------------------------------------------------
-
-ax.axhline(
-    0,
-    linestyle=":",
-    linewidth=1,
-    color="gray",
-    alpha=0.5
-)
-
-ax.axvline(
-    0,
-    linestyle=":",
-    linewidth=1,
-    color="gray",
-    alpha=0.5
-)
-
-
-# ------------------------------------------------------------
-# Labels
-# ------------------------------------------------------------
-
-ax.set_xlabel(
-    "Selective Positive Self-presentation (SD)",
-    fontsize=11
-)
-
-ax.set_ylabel(
-    "Predicted Positive Self-image (SD)",
-    fontsize=11
-)
-
-ax.set_title(
-    "Selective Self-presentation and\n"
-    "Online vs. Offline Positive Self-image",
-    fontsize=14,
-    pad=12
-)
-
-
-# ------------------------------------------------------------
-# X-axis
-# ------------------------------------------------------------
-
-ax.set_xticks([-2, -1, 0, 1, 2])
-
-ax.set_xticklabels([
-    "−2 SD",
-    "−1 SD",
-    "Mean",
-    "+1 SD",
-    "+2 SD"
-])
-
-
-# ------------------------------------------------------------
-# Coefficient annotations
-# ------------------------------------------------------------
-
-# 放在右側，但不要壓在線上
-x_label = 1.25
-
-online_y = online_intercept + online_beta * x_label
-offline_y = offline_intercept + offline_beta * x_label
-
-
-ax.annotate(
-    "Online: β = .448",
-    xy=(x_label, online_y),
-    xytext=(12, 15),                 # 往右、往上移
-    textcoords="offset points",
-    fontsize=10,
-    color="tab:blue",
-    bbox=dict(
-        facecolor="white",
-        edgecolor="none",
-        alpha=0.8,
-        pad=2
-    )
-)
-
-
-ax.annotate(
-    "Offline: β = .195",
-    xy=(x_label, offline_y),
-    xytext=(12, -22),                # 往右、往下移
-    textcoords="offset points",
-    fontsize=10,
-    color="tab:red",
-    bbox=dict(
-        facecolor="white",
-        edgecolor="none",
-        alpha=0.8,
-        pad=2
-    )
-)
-
-
-# ------------------------------------------------------------
-# Legend
-# ------------------------------------------------------------
-
-ax.legend(
-    frameon=False,
-    loc="upper left",
-    fontsize=10
-)
-
-
-# ------------------------------------------------------------
-# Appearance
-# ------------------------------------------------------------
-
-ax.spines["top"].set_visible(False)
-ax.spines["right"].set_visible(False)
-
-ax.tick_params(axis="both", labelsize=10)
-
-plt.tight_layout()
-
-
-# ------------------------------------------------------------
-# Save
-# ------------------------------------------------------------
-
-plt.savefig(
-    "figure1_selective_self_presentation.png",
     dpi=300,
     bbox_inches="tight"
 )

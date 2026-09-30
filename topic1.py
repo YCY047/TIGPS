@@ -2485,3 +2485,221 @@ print(
 
 print("N =", int(rq1_focus_offline.nobs))
 print("R² =", round(rq1_focus_offline.rsquared, 4))
+
+# ============================================================
+# FINAL RQ1 SLOPE-DIFFERENCE TEST
+# Online vs. Offline Positive Self-image
+# ============================================================
+
+import pandas as pd
+import statsmodels.formula.api as smf
+
+
+# ------------------------------------------------------------
+# 1. Prepare the SAME focused RQ1 sample
+# ------------------------------------------------------------
+
+slope_test_vars = [
+    "selective_presentation_score",
+    "online_self_image_score",
+    "offline_self_image_score",
+    "female",
+    "family_ses",
+    "HOUWGT",
+    "nschool_id"
+]
+
+slope_data = (
+    topic1[slope_test_vars]
+    .dropna()
+    .copy()
+)
+
+
+# ------------------------------------------------------------
+# 2. Standardize within the same analytic sample
+# ------------------------------------------------------------
+
+for col in [
+    "selective_presentation_score",
+    "online_self_image_score",
+    "offline_self_image_score",
+    "family_ses"
+]:
+    slope_data[col + "_z"] = (
+        slope_data[col] - slope_data[col].mean()
+    ) / slope_data[col].std()
+
+
+# Give each student an ID for reshaping
+slope_data["student_row_id"] = slope_data.index
+
+
+# ------------------------------------------------------------
+# 3. Convert Online / Offline outcomes to long format
+# ------------------------------------------------------------
+
+online_long = slope_data[
+    [
+        "student_row_id",
+        "selective_presentation_score_z",
+        "online_self_image_score_z",
+        "female",
+        "family_ses_z",
+        "HOUWGT",
+        "nschool_id"
+    ]
+].copy()
+
+online_long = online_long.rename(
+    columns={
+        "online_self_image_score_z": "self_image_z"
+    }
+)
+
+online_long["online_type"] = 1
+
+
+offline_long = slope_data[
+    [
+        "student_row_id",
+        "selective_presentation_score_z",
+        "offline_self_image_score_z",
+        "female",
+        "family_ses_z",
+        "HOUWGT",
+        "nschool_id"
+    ]
+].copy()
+
+offline_long = offline_long.rename(
+    columns={
+        "offline_self_image_score_z": "self_image_z"
+    }
+)
+
+offline_long["online_type"] = 0
+
+
+long_data = pd.concat(
+    [online_long, offline_long],
+    ignore_index=True
+)
+
+
+# ------------------------------------------------------------
+# 4. Joint WLS model
+#
+# online_type = 0 → Offline
+# online_type = 1 → Online
+#
+# Interaction:
+# selective_z : online_type
+# = Online slope - Offline slope
+# ------------------------------------------------------------
+
+slope_model = smf.wls(
+    """
+    self_image_z ~
+    online_type *
+    (
+        selective_presentation_score_z
+        + female
+        + family_ses_z
+    )
+    """,
+    data=long_data,
+    weights=long_data["HOUWGT"]
+).fit(
+    cov_type="cluster",
+    cov_kwds={
+        "groups": long_data["nschool_id"]
+    }
+)
+
+
+# ------------------------------------------------------------
+# 5. Output
+# ------------------------------------------------------------
+
+print("\n" + "=" * 70)
+print("RQ1 ONLINE vs OFFLINE SLOPE-DIFFERENCE TEST")
+print("=" * 70)
+
+print(
+    slope_model.summary2()
+    .tables[1]
+    .round(4)
+)
+
+
+# ------------------------------------------------------------
+# 6. Extract slope difference
+# ------------------------------------------------------------
+
+interaction_name = (
+    "online_type:selective_presentation_score_z"
+)
+
+difference = slope_model.params[interaction_name]
+se = slope_model.bse[interaction_name]
+p = slope_model.pvalues[interaction_name]
+
+ci = slope_model.conf_int().loc[interaction_name]
+
+
+print("\n--- Main test ---")
+
+print(
+    "Offline slope =",
+    round(
+        slope_model.params[
+            "selective_presentation_score_z"
+        ],
+        4
+    )
+)
+
+print(
+    "Online slope =",
+    round(
+        slope_model.params[
+            "selective_presentation_score_z"
+        ]
+        + difference,
+        4
+    )
+)
+
+print(
+    "Online - Offline slope difference =",
+    round(difference, 4)
+)
+
+print(
+    "SE =",
+    round(se, 4)
+)
+
+print(
+    "95% CI =",
+    (
+        round(ci.iloc[0], 4),
+        round(ci.iloc[1], 4)
+    )
+)
+
+print(
+    "p-value =",
+    round(p, 6)
+)
+
+print(
+    "N students =",
+    len(slope_data)
+)
+
+print(
+    "N stacked observations =",
+    len(long_data)
+)
