@@ -1,6 +1,7 @@
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
+import statsmodels.formula.api as smf
 
 
 # ============================================================
@@ -275,241 +276,445 @@ plt.savefig(
 plt.show()
 
 # ============================================================
-# FIGURE 2
-# Online vs Offline Positive Self-image
-# and Psychological Outcomes
+# FIGURE 2A–2C
+# Online / Offline Positive Self-image → Psychological outcomes
+# Same style as Figure 1; one figure per outcome.
+#
+# Model (same as topic1.py FORMAL ANALYSIS 5C, RQ2):
+#   outcome_z ~ online_z + offline_z + female + family_ses_z
+#   WLS with HOUWGT, school-clustered SE (nschool_id)
+#
+# Coefficients are estimated here rather than hard-coded,
+# so the figures stay in sync with the data.
 # ============================================================
 
-fig2 = pd.DataFrame({
-    "Outcome": [
-        "Self-esteem",
-        "Well-being",
-        "Depressive symptoms"
-    ],
+def scale_mean(data, items, valid):
+    x = data[items].where(valid(data[items]))
+    return x.mean(axis=1).where(x.notna().sum(axis=1) == len(items))
 
-    "Online_beta": [
-        -0.1360,
-        -0.1077,
-         0.2127
-    ],
 
-    "Online_low": [
-        -0.1590,
-        -0.1274,
-         0.1901
-    ],
+def zscore(x):
+    return (x - x.mean()) / x.std()
 
-    "Online_high": [
-        -0.1131,
-        -0.0880,
-         0.2352
-    ],
 
-    "Offline_beta": [
-         0.4855,
-         0.3842,
-        -0.2683
-    ],
+def fmt_beta(b):
+    # APA style: no leading zero, typographic minus sign
+    s = f"{abs(b):.3f}".lstrip("0")
+    return ("\u2212" if b < 0 else "") + s
 
-    "Offline_low": [
-         0.4589,
-         0.3603,
-        -0.2954
-    ],
 
-    "Offline_high": [
-         0.5121,
-         0.4081,
-        -0.2411
+# Outcome scales (same rules as topic1.py).
+# online/offline self-image scores were already built for Figure 1.
+fig2_data = df[[
+    "online_self_image_score", "offline_self_image_score",
+    "bs1", "bs3", "HOUWGT", "nschool_id"
+]].copy()
+
+fig2_data["self_esteem_score"] = scale_mean(
+    df, ["bs53a", "bs53b", "bs53c"], lambda x: x > 0
+)
+fig2_data["depression_score"] = scale_mean(
+    df, [f"bs56{c}" for c in "abcdefghijklmn"], lambda x: x >= 0
+)
+fig2_data["wellbeing_score"] = scale_mean(
+    df, [f"bs58{c}" for c in "abcde"], lambda x: x >= 0
+)
+fig2_data["female"] = (fig2_data["bs1"] == 1).astype(int)
+fig2_data["family_ses"] = fig2_data["bs3"].where(fig2_data["bs3"].between(1, 10))
+
+fig2_outcomes = [
+    {
+        "var": "self_esteem_score",
+        "name": "Self-esteem",
+        "ylabel": "Model-estimated Self-esteem",
+        "ylim": (1, 4),
+        "file": "figure2a_selfimage_selfesteem.png",
+    },
+    {
+        "var": "wellbeing_score",
+        "name": "Well-being",
+        "ylabel": "Model-estimated Well-being (WHO-5)",
+        "ylim": (0, 4),
+        "file": "figure2b_selfimage_wellbeing.png",
+    },
+    {
+        "var": "depression_score",
+        "name": "Depressive Symptoms",
+        "ylabel": "Model-estimated Depressive Symptoms",
+        "ylim": (0, 4),
+        "file": "figure2c_selfimage_depression.png",
+    },
+]
+
+
+def fit_figure2(spec):
+    """Fit the RQ2 model for one outcome and return predicted lines."""
+    y = spec["var"]
+
+    d = fig2_data[[
+        y, "online_self_image_score", "offline_self_image_score",
+        "female", "family_ses", "HOUWGT", "nschool_id"
+    ]].dropna().copy()
+
+    for col in [y, "online_self_image_score",
+                "offline_self_image_score", "family_ses"]:
+        d[col + "_z"] = zscore(d[col])
+
+    model = smf.wls(
+        f"{y}_z ~ online_self_image_score_z + offline_self_image_score_z"
+        " + female + family_ses_z",
+        data=d,
+        weights=d["HOUWGT"],
+    ).fit(cov_type="cluster", cov_kwds={"groups": d["nschool_id"]})
+
+    b = model.params
+    b_on = b["online_self_image_score_z"]
+    b_off = b["offline_self_image_score_z"]
+
+    print(f"Figure 2 ({spec['name']}): N = {int(model.nobs)}, "
+          f"online β = {b_on:.4f}, offline β = {b_off:.4f}")
+
+    # Predictions on the original 1–4 self-image scale.
+    # The other self-image score and family SES are held at their means
+    # (z = 0); gender is held at the sample proportion of girls.
+    x_raw = np.linspace(1, 4, 200)
+    on_mean, on_sd = d["online_self_image_score"].agg(["mean", "std"])
+    off_mean, off_sd = d["offline_self_image_score"].agg(["mean", "std"])
+    y_mean, y_sd = d[y].agg(["mean", "std"])
+
+    base_z = b["Intercept"] + b["female"] * d["female"].mean()
+
+    return {
+        "x": x_raw,
+        "online_pred": y_mean + (base_z + b_on * (x_raw - on_mean) / on_sd) * y_sd,
+        "offline_pred": y_mean + (base_z + b_off * (x_raw - off_mean) / off_sd) * y_sd,
+        "b_on": b_on,
+        "b_off": b_off,
+    }
+
+
+def plot_figure2_panel(ax, spec, res, title, label_size=11, legend=True):
+    """Draw one outcome panel in Figure 1 style on the given axes."""
+    x_raw = res["x"]
+    online_pred, offline_pred = res["online_pred"], res["offline_pred"]
+    b_on, b_off = res["b_on"], res["b_off"]
+
+    ax.plot(x_raw, online_pred, linewidth=3, color="tab:blue",
+            label="Online Positive Self-image")
+    ax.plot(x_raw, offline_pred, linewidth=3, linestyle="--",
+            color="tab:red", label="Offline Positive Self-image")
+
+    ax.set_xlim(1, 4)
+    ax.set_xticks(np.arange(1, 4.01, 0.5))
+    ax.set_xticklabels(["1\nLow", "1.5", "2", "2.5", "3", "3.5", "4\nHigh"])
+
+    lo, hi = spec["ylim"]
+    ax.set_ylim(lo, hi)
+    ax.set_yticks(np.arange(lo, hi + 0.01, 0.5))
+
+    ax.set_xlabel("Positive Self-image", fontsize=12)
+    ax.set_ylabel(spec["ylabel"], fontsize=12)
+    ax.set_title(title, fontsize=14, pad=12)
+
+    # β labels: the upper line gets its label above the line,
+    # the lower line gets its label below, measured over the
+    # x-range the label occupies so text never sits on a line.
+    label_x = 3.05 if label_size >= 11 else 2.75
+    span = x_raw >= label_x
+    on_seg, off_seg = online_pred[span], offline_pred[span]
+    online_is_upper = on_seg.mean() >= off_seg.mean()
+    pad = 0.07 * (hi - lo)
+
+    labels = [
+        (f"Online: β = {fmt_beta(b_on)}", on_seg, online_is_upper, "tab:blue"),
+        (f"Offline: β = {fmt_beta(b_off)}", off_seg, not online_is_upper, "tab:red"),
     ]
-})
+    positions = {
+        t: (seg.max() + pad if up else seg.min() - pad)
+        for t, seg, up, _ in labels
+    }
 
-# Reverse so Self-esteem is on top
-fig2 = fig2.iloc[::-1].reset_index(drop=True)
+    # If the lower label would fall off the bottom of the plot,
+    # stack both labels above the upper line instead.
+    lower_text = [t for t, _, up, _ in labels if not up][0]
+    upper_text = [t for t, _, up, _ in labels if up][0]
+    if positions[lower_text] < lo + 0.6 * pad:
+        positions[lower_text] = positions[upper_text]
+        positions[upper_text] = positions[upper_text] + 1.3 * pad
 
-y = np.arange(len(fig2))
+    for text, seg, upper, color in labels:
+        ax.text(label_x, positions[text], text, color=color,
+                fontsize=label_size, fontweight="bold",
+                ha="left", va="center",
+                bbox=dict(facecolor="white", edgecolor="none",
+                          alpha=0.85, pad=3))
 
-fig, ax = plt.subplots(figsize=(9, 4.5))
+    if legend:
+        ax.legend(frameon=False, loc="upper left")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(axis="y", linestyle=":", alpha=0.25)
 
-# Online
-ax.errorbar(
-    fig2["Online_beta"],
-    y + 0.10,
-    xerr=[
-        fig2["Online_beta"] - fig2["Online_low"],
-        fig2["Online_high"] - fig2["Online_beta"]
-    ],
-    fmt="o",
-    capsize=4,
-    label="Online Positive Self-image"
-)
 
-# Offline
-ax.errorbar(
-    fig2["Offline_beta"],
-    y - 0.10,
-    xerr=[
-        fig2["Offline_beta"] - fig2["Offline_low"],
-        fig2["Offline_high"] - fig2["Offline_beta"]
-    ],
-    fmt="s",
-    capsize=4,
-    label="Offline Positive Self-image"
-)
+# ---------- Figures 2A–2C: one figure per outcome ----------
 
-ax.axvline(
-    0,
-    linestyle="--",
-    linewidth=1
-)
+fig2_results = []
+for spec in fig2_outcomes:
+    res = fit_figure2(spec)
+    fig2_results.append(res)
 
-ax.set_yticks(y)
-ax.set_yticklabels(fig2["Outcome"])
+    fig, ax = plt.subplots(figsize=(9, 6))
+    plot_figure2_panel(
+        ax, spec, res,
+        title=f"Online vs. Offline Positive Self-image\nand {spec['name']}",
+    )
+    plt.tight_layout()
+    plt.savefig(spec["file"], dpi=300, bbox_inches="tight")
+    plt.show()
 
-ax.set_xlabel(
-    "Standardized regression coefficient (β)"
-)
 
-ax.set_title(
-    "Online and Offline Positive Self-image\n"
-    "Show Distinct Psychological Associations"
-)
+# ============================================================
+# FIGURE 2D
+# Combined figure: lines from 2A + 2B + 2C overlaid on one plot.
+#
+# Colour = outcome; line style = self-image type
+# (solid = online, dashed = offline, as in Figure 1).
+# All three outcomes are drawn on a shared 0–4 axis, which
+# contains every outcome's original range (self-esteem 1–4,
+# well-being 0–4, depressive symptoms 0–4).
+# ============================================================
 
-ax.legend(
-    frameon=False,
-    loc="upper left"
+outcome_colors = {
+    "Self-esteem": "#7b3294",          # purple
+    "Well-being": "#1b9e77",           # teal
+    "Depressive Symptoms": "#d95f02",  # orange
+}
+
+fig, ax = plt.subplots(figsize=(11, 7))
+
+end_labels = []   # (y at x = 4, text, colour)
+for spec, res in zip(fig2_outcomes, fig2_results):
+    color = outcome_colors[spec["name"]]
+    ax.plot(res["x"], res["online_pred"], linewidth=3, color=color)
+    ax.plot(res["x"], res["offline_pred"], linewidth=3, linestyle="--",
+            color=color)
+    end_labels.append((res["online_pred"][-1],
+                       f"{spec['name']} – Online: β = {fmt_beta(res['b_on'])}",
+                       color))
+    end_labels.append((res["offline_pred"][-1],
+                       f"{spec['name']} – Offline: β = {fmt_beta(res['b_off'])}",
+                       color))
+
+ax.set_xlim(1, 4)
+ax.set_xticks(np.arange(1, 4.01, 0.5))
+ax.set_xticklabels(["1\nLow", "1.5", "2", "2.5", "3", "3.5", "4\nHigh"])
+ax.set_ylim(0, 4)
+ax.set_yticks(np.arange(0, 4.01, 0.5))
+
+ax.set_xlabel("Positive Self-image", fontsize=12)
+ax.set_ylabel("Model-estimated Outcome Score (original scale)", fontsize=12)
+ax.set_title("Online vs. Offline Positive Self-image\n"
+             "and Three Psychological Outcomes", fontsize=14, pad=12)
+
+# Labels in the right margin, at the end of each line.
+# Sorted by height and pushed apart so they never overlap.
+min_gap = 0.17
+end_labels.sort(key=lambda t: t[0])
+label_y = [t[0] for t in end_labels]
+for i in range(1, len(label_y)):
+    label_y[i] = max(label_y[i], label_y[i - 1] + min_gap)
+overflow = label_y[-1] - 3.95          # keep the top label inside the plot
+if overflow > 0:
+    label_y = [v - overflow for v in label_y]
+    for i in range(len(label_y) - 2, -1, -1):
+        label_y[i] = min(label_y[i], label_y[i + 1] - min_gap)
+
+for (y_end, text, color), y_lab in zip(end_labels, label_y):
+    ax.annotate(
+        text, xy=(4, y_end), xytext=(4.08, y_lab),
+        textcoords="data", annotation_clip=False,
+        color=color, fontsize=10.5, fontweight="bold",
+        ha="left", va="center",
+        arrowprops=dict(arrowstyle="-", color=color, lw=0.8,
+                        shrinkA=0, shrinkB=2),
+    )
+
+# Legend for line style only (outcomes are named by the end labels)
+from matplotlib.lines import Line2D
+style_handles = [
+    Line2D([0], [0], color="dimgray", lw=3, label="Online Positive Self-image"),
+    Line2D([0], [0], color="dimgray", lw=3, linestyle="--",
+           label="Offline Positive Self-image"),
+]
+ax.legend(handles=style_handles, frameon=False, loc="upper left")
+
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+ax.grid(axis="y", linestyle=":", alpha=0.25)
+
+fig.text(
+    0.01, -0.01,
+    "Note. Lines are model-estimated values from weighted (HOUWGT) regressions "
+    "with school-clustered SEs; online and offline self-image entered together,\n"
+    "controlling for gender and family SES. When one line is drawn, the other "
+    "self-image score and family SES are held at their means.\n"
+    "Outcomes use different scales (self-esteem 1–4; well-being and depressive "
+    "symptoms 0–4), so compare slopes rather than line heights across outcomes.\n"
+    "Higher depressive-symptom scores indicate worse mental health. "
+    "β = standardized coefficient.",
+    fontsize=9, color="dimgray", ha="left", va="top",
 )
 
 plt.tight_layout()
-
-plt.savefig(
-    "figure2_selfimage_psychological_outcomes.png",
-    dpi=300,
-    bbox_inches="tight"
-)
-
+plt.savefig("figure2d_selfimage_outcomes_combined.png",
+            dpi=300, bbox_inches="tight")
 plt.show()
 
+
 # ============================================================
-# FIGURE 3
+# FIGURE 3A–3B
 # Gender moderation:
-# Selective presentation → Online / Offline self-image
+# Selective presentation → Online (3A) / Offline (3B) self-image
+# Same style as Figure 1; one figure per self-image type.
+#
+# Model (same as topic1.py RQ3A, weighted + clustered):
+#   self_image_z ~ selective_z * female + family_ses_z
+#   WLS with HOUWGT, school-clustered SE (nschool_id)
+#
+# Lines show boys (female = 0) and girls (female = 1) with family
+# SES held at its mean. β labels are the simple slopes per gender.
 # ============================================================
 
-x = np.linspace(-2, 2, 100)
+fig3_data = df[[
+    "selective_presentation_score",
+    "online_self_image_score", "offline_self_image_score",
+    "bs1", "bs3", "HOUWGT", "nschool_id"
+]].copy()
+fig3_data["female"] = (fig3_data["bs1"] == 1).astype(int)
+fig3_data["family_ses"] = fig3_data["bs3"].where(fig3_data["bs3"].between(1, 10))
+fig3_data = fig3_data.drop(columns=["bs1", "bs3"]).dropna()
 
-# Weighted + clustered RQ3A coefficients
-# Predictions shown at family_ses_z = 0
+# Standardize within the shared analytic sample (as in topic1.py RQ3A)
+for col in ["selective_presentation_score", "online_self_image_score",
+            "offline_self_image_score", "family_ses"]:
+    fig3_data[col + "_z"] = zscore(fig3_data[col])
 
-# ONLINE
-online_intercept = 0.0180
-online_selective = 0.4403
-online_female = -0.0587
-online_interaction = 0.0164
-
-online_male = (
-    online_intercept
-    + online_selective * x
-)
-
-online_female_pred = (
-    online_intercept
-    + online_female
-    + (online_selective + online_interaction) * x
-)
+print("Figure 3 analytic N =", len(fig3_data))
 
 
-# OFFLINE
-offline_intercept = 0.0674
-offline_selective = 0.2613
-offline_female = -0.1287
-offline_interaction = -0.1470
-
-offline_male = (
-    offline_intercept
-    + offline_selective * x
-)
-
-offline_female_pred = (
-    offline_intercept
-    + offline_female
-    + (offline_selective + offline_interaction) * x
-)
+def fmt_p(p):
+    return "p < .001" if p < .001 else "p = " + f"{p:.3f}".lstrip("0")
 
 
-# ------------------------------------------------------------
-# Plot
-# ------------------------------------------------------------
+fig3_specs = [
+    {
+        "var": "online_self_image_score",
+        "kind": "Online",
+        # Online palette (Figure 1 blue): boys darker, girls lighter
+        "colors": {"Male": "#1f4e79", "Female": "#5b9bd5"},
+        "file": "figure3a_gender_moderation_online.png",
+    },
+    {
+        "var": "offline_self_image_score",
+        "kind": "Offline",
+        # Offline palette (Figure 1 red): boys darker, girls lighter
+        "colors": {"Male": "#9e1b1b", "Female": "#e8726b"},
+        "file": "figure3b_gender_moderation_offline.png",
+    },
+]
 
-fig, ax = plt.subplots(figsize=(9, 6))
 
-# Online
-ax.plot(
-    x,
-    online_male,
-    linewidth=2,
-    label="Online — Male"
-)
+def draw_figure3(spec):
+    y = spec["var"]
+    d = fig3_data
 
-ax.plot(
-    x,
-    online_female_pred,
-    linewidth=2,
-    linestyle="--",
-    label="Online — Female"
-)
+    model = smf.wls(
+        f"{y}_z ~ selective_presentation_score_z * female + family_ses_z",
+        data=d,
+        weights=d["HOUWGT"],
+    ).fit(cov_type="cluster", cov_kwds={"groups": d["nschool_id"]})
 
-# Offline
-ax.plot(
-    x,
-    offline_male,
-    linewidth=2,
-    label="Offline — Male"
-)
+    b = model.params
+    inter = "selective_presentation_score_z:female"
+    slope_m = b["selective_presentation_score_z"]
+    slope_f = slope_m + b[inter]
+    p_inter = model.pvalues[inter]
 
-ax.plot(
-    x,
-    offline_female_pred,
-    linewidth=2,
-    linestyle="--",
-    label="Offline — Female"
-)
+    print(f"Figure 3 ({spec['kind']}): male slope = {slope_m:.4f}, "
+          f"female slope = {slope_f:.4f}, "
+          f"interaction = {b[inter]:.4f} ({fmt_p(p_inter)})")
 
-ax.axhline(
-    0,
-    linewidth=0.8,
-    linestyle=":"
-)
+    # Predictions on the original 1–4 scales, family SES at mean (z = 0)
+    x_raw = np.linspace(1, 4, 200)
+    sel_mean, sel_sd = d["selective_presentation_score"].agg(["mean", "std"])
+    y_mean, y_sd = d[y].agg(["mean", "std"])
+    x_z = (x_raw - sel_mean) / sel_sd
 
-ax.axvline(
-    0,
-    linewidth=0.8,
-    linestyle=":"
-)
+    preds = {
+        "Male": y_mean + (b["Intercept"] + slope_m * x_z) * y_sd,
+        "Female": y_mean + (b["Intercept"] + b["female"] + slope_f * x_z) * y_sd,
+    }
+    slopes = {"Male": slope_m, "Female": slope_f}
+    styles = {"Male": "-", "Female": "--"}
 
-ax.set_xlabel(
-    "Selective Positive Self-presentation (SD)"
-)
+    # --------------------------------------------------------
+    # Plot (Figure 1 style)
+    # --------------------------------------------------------
+    fig, ax = plt.subplots(figsize=(9, 6))
 
-ax.set_ylabel(
-    "Predicted Positive Self-image (SD)"
-)
+    for g in ["Male", "Female"]:
+        ax.plot(x_raw, preds[g], linewidth=3, linestyle=styles[g],
+                color=spec["colors"][g], label=g)
 
-ax.set_title(
-    "Gender Moderates the Association Between\n"
-    "Selective Self-presentation and Offline Self-image"
-)
+    ax.set_xlim(1, 4)
+    ax.set_xticks(np.arange(1, 4.01, 0.5))
+    ax.set_xticklabels(["1\nLow", "1.5", "2", "2.5", "3", "3.5", "4\nHigh"])
+    ax.set_ylim(1, 4)
+    ax.set_yticks(np.arange(1, 4.01, 0.5))
 
-ax.legend(
-    frameon=False
-)
+    ax.set_xlabel("Selective Positive Self-presentation", fontsize=12)
+    ax.set_ylabel(f"Model-estimated {spec['kind']} Positive Self-image",
+                  fontsize=12)
+    ax.set_title(f"Selective Self-presentation and {spec['kind']} "
+                 f"Positive Self-image:\nBoys vs. Girls",
+                 fontsize=14, pad=12)
 
-plt.tight_layout()
+    # Simple-slope labels: upper line labelled above, lower line below,
+    # stacked above if the lower label would leave the plot.
+    span = x_raw >= 3.05
+    segs = {g: preds[g][span] for g in preds}
+    upper = max(segs, key=lambda g: segs[g].mean())
+    lower = "Female" if upper == "Male" else "Male"
+    pad = 0.07 * 3
+    pos = {upper: segs[upper].max() + pad, lower: segs[lower].min() - pad}
+    if abs(pos[upper] - pos[lower]) < 1.3 * pad:
+        pos[upper] = pos[lower] + 1.3 * pad
+    if pos[lower] < 1 + 0.6 * pad:
+        pos[lower] = segs[upper].max() + pad
+        pos[upper] = pos[lower] + 1.3 * pad
 
-plt.savefig(
-    "figure3_gender_moderation.png",
-    dpi=300,
-    bbox_inches="tight"
-)
+    for g in ["Male", "Female"]:
+        ax.text(3.05, pos[g], f"{g}: β = {fmt_beta(slopes[g])}",
+                color=spec["colors"][g], fontsize=11, fontweight="bold",
+                ha="left", va="center",
+                bbox=dict(facecolor="white", edgecolor="none",
+                          alpha=0.85, pad=3))
 
-plt.show()
+    # Interaction test, bottom right
+    ax.text(3.95, 1.12,
+            f"Gender × Selective presentation: "
+            f"β = {fmt_beta(b[inter])}, {fmt_p(p_inter)}",
+            fontsize=10, color="dimgray", ha="right", va="center")
+
+    ax.legend(frameon=False, loc="upper left")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.grid(axis="y", linestyle=":", alpha=0.25)
+
+    plt.tight_layout()
+    plt.savefig(spec["file"], dpi=300, bbox_inches="tight")
+    plt.show()
+
+
+for spec in fig3_specs:
+    draw_figure3(spec)
