@@ -740,9 +740,11 @@ for spec in fig3_specs:
             out["color"],
         ))
 
-    ax.set_xlim(0, 3)
-    ax.set_xticks(np.arange(0, 3.01, 0.5))
-    ax.set_xticklabels(["0\n(equal)", "0.5", "1", "1.5", "2", "2.5", "3"])
+    # x 軸畫到 4（與其他圖一致）；落差最大只可能是 3，所以線停在 3
+    ax.set_xlim(0, 4)
+    ax.set_xticks(np.arange(0, 4.01, 0.5))
+    ax.set_xticklabels(["0\n(equal)", "0.5", "1", "1.5", "2", "2.5", "3",
+                        "3.5", "4"])
     ax.set_ylim(0, 5)
     ax.set_yticks(np.arange(0, 5.01, 0.5))
 
@@ -790,6 +792,13 @@ for spec in fig3_specs:
     ax.spines["right"].set_visible(False)
     ax.grid(axis="y", linestyle=":", alpha=0.25)
 
+    # 終止線：落差最大可能值 = 3（兩個量表都是 1–4 分），3–4 之間不可能有資料
+    ax.axvspan(3, 4, color="#F2F2F2", zorder=0, linewidth=0)
+    ax.axvline(3, color="dimgray", linestyle="--", linewidth=1.2, zorder=1)
+    ax.text(3.5, 4.85, "Beyond maximum\npossible gap (3)",
+            ha="center", va="top", fontsize=9.5, color="dimgray",
+            style="italic")
+
     n_dir = (subset["gap_group"] == spec["direction"]).sum()
     n_eq = (subset["gap_group"] == "Equal").sum()
     fig.text(
@@ -803,7 +812,9 @@ for spec in fig3_specs:
         "Outcomes use different scales (self-esteem 1–4; well-being and depressive symptoms 0–5), "
         "so compare slopes rather than line heights.\n"
         "Higher depressive-symptom scores indicate worse mental health. "
-        "β = change in the standardized outcome per 1-point gap.",
+        "β = change in the standardized outcome per 1-point gap.\n"
+        "The maximum possible gap is 3 because both self-image scales range from 1 to 4 "
+        "(dashed line); the shaded area beyond 3 contains no possible values.",
         fontsize=9, color="dimgray", ha="left", va="top",
     )
 
