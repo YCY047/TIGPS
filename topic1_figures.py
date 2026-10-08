@@ -810,3 +810,140 @@ for spec in fig3_specs:
     plt.tight_layout()
     plt.savefig(spec["file"], dpi=300, bbox_inches="tight")
     plt.show()
+
+    # ============================================================
+# FIGURE RQ2
+# Selective Presentation × Online/Offline Self-image Groups
+# 100% Stacked Bar Chart
+# ============================================================
+
+# 1. Prepare RQ2 data
+rq2_plot = df[[
+    "selective_presentation_score",
+    "online_self_image_score",
+    "offline_self_image_score"
+]].dropna().copy()
+
+# Online - Offline
+rq2_plot["gap"] = (
+    rq2_plot["online_self_image_score"]
+    - rq2_plot["offline_self_image_score"]
+).round(6)
+
+# 2. Classify self-image groups
+rq2_plot["image_group"] = np.select(
+    [
+        rq2_plot["gap"] > 0,
+        rq2_plot["gap"] < 0
+    ],
+    [
+        "Online > Offline",
+        "Online < Offline"
+    ],
+    default="Equal"
+)
+
+# 3. Classify Selective levels
+rq2_plot["selective_group"] = pd.cut(
+    rq2_plot["selective_presentation_score"],
+    bins=[0, 2, 3, 4],
+    labels=["Low", "Medium", "High"],
+    include_lowest=True
+)
+
+# 4. Calculate row percentages
+group_order = ["Low", "Medium", "High"]
+image_order = [
+    "Online > Offline",
+    "Equal",
+    "Online < Offline"
+]
+
+rq2_pct = pd.crosstab(
+    rq2_plot["selective_group"],
+    rq2_plot["image_group"],
+    normalize="index"
+).reindex(
+    index=group_order,
+    columns=image_order,
+    fill_value=0
+) * 100
+
+print("\nRQ2 Figure N =", len(rq2_plot))
+print(rq2_pct.round(2))
+
+# 5. Plot 100% stacked horizontal bars
+colors = ["#347EB2", "#8999AA", "#D9965F"]
+
+fig, ax = plt.subplots(figsize=(10, 5.5))
+
+left = np.zeros(len(group_order))
+
+for group, color in zip(image_order, colors):
+    values = rq2_pct[group].to_numpy()
+
+    bars = ax.barh(
+        group_order,
+        values,
+        left=left,
+        color=color,
+        height=0.6,
+        label=group,
+        edgecolor="white",
+        linewidth=1
+    )
+
+    # Percentage labels
+    for bar, value in zip(bars, values):
+        if value >= 5:
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_y() + bar.get_height() / 2,
+                f"{value:.1f}%",
+                ha="center",
+                va="center",
+                color="white",
+                fontsize=11,
+                fontweight="bold"
+            )
+
+    left += values
+
+# 6. Axis and appearance
+ax.set_xlim(0, 100)
+ax.set_xticks(np.arange(0, 101, 20))
+ax.set_xticklabels([f"{x}%" for x in range(0, 101, 20)])
+
+ax.invert_yaxis()  # Low → Medium → High (top to bottom)
+
+ax.set_xlabel("Percentage of Students", fontsize=12)
+ax.set_ylabel("Selective Positive Self-presentation", fontsize=12)
+
+ax.set_title(
+    "Online–Offline Self-image Profiles\n"
+    "by Selective Positive Self-presentation",
+    fontsize=14,
+    pad=15
+)
+
+ax.legend(
+    loc="upper center",
+    bbox_to_anchor=(0.5, -0.15),
+    ncol=3,
+    frameon=False
+)
+
+ax.spines["top"].set_visible(False)
+ax.spines["right"].set_visible(False)
+ax.spines["left"].set_visible(False)
+
+plt.tight_layout()
+
+# 7. Save
+plt.savefig(
+    "figure_rq2_stacked_bar.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.show()

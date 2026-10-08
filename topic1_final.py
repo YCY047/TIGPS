@@ -1,7 +1,10 @@
 import pandas as pd
 import numpy as np
 import statsmodels.formula.api as smf
-
+import statsmodels.api as sm
+from scipy.optimize import minimize
+from scipy.special import logsumexp
+from scipy.stats import norm
 #1. load Data
 df= pd.read_csv(
     "TIGPSw2_s.csv",
@@ -413,369 +416,273 @@ print(
     .round(3)
 )
 
-#21. 建立RQ2 analytic examples
-def prepare_rq2_sample(outcome):
-    variables=[
-        "online_self_image_score",
-        "offline_self_image_score",
-        outcome,
-        "female",
-        "bs3",
-        "HOUWGT",
-        "nschool_id"
-    ]
-    sample=(
-        topic1[variables]
-        .dropna()
-        .copy()
-    )
-    return sample
-rq2_self_esteem=prepare_rq2_sample(
-    "self_esteem_score"
+# RQ2A. 三類 Online/Offline self-image 與 Selective 的描述統計
+rq2_desc = topic1[[
+    "selective_presentation_score",
+    "self_image_gap"
+]].dropna().copy()
+
+# 避免由三題平均造成的浮點數極小誤差；Equal 即兩者平均數相同
+rq2_gap_tolerance = 1e-9
+rq2_desc["image_group"] = np.select(
+    [
+        rq2_desc["self_image_gap"] > rq2_gap_tolerance,
+        rq2_desc["self_image_gap"] < -rq2_gap_tolerance
+    ],
+    ["Online > Offline", "Online < Offline"],
+    default="Online = Offline"
 )
-print(
-    "\nRQ2 Self-esteem analytic sample:",
-    len(rq2_self_esteem)
-)
-#22.standardize RQ2 self-esteem variables
-rq2_self_esteem_vars = [
-    "online_self_image_score",
-    "offline_self_image_score",
-    "self_esteem_score",
-    "bs3"
+
+rq2_group_order = [
+    "Online > Offline", "Online = Offline", "Online < Offline"
 ]
 
-for col in rq2_self_esteem_vars:
-    rq2_self_esteem[col + "_z"] = (
-        rq2_self_esteem[col]
-        - rq2_self_esteem[col].mean()
-    ) / rq2_self_esteem[col].std()
-
-print("\nStandardized RQ2 Self-esteem variables:")
-print(
-    rq2_self_esteem[
-        [col + "_z" for col in rq2_self_esteem_vars]
-    ]
-    .describe()
-    .round(3)
+rq2_group_summary = (
+    rq2_desc.groupby("image_group")
+    .agg(
+        n=("selective_presentation_score", "size"),
+        selective_mean=("selective_presentation_score", "mean"),
+        selective_sd=("selective_presentation_score", "std"),
+        difference_mean=("self_image_gap", "mean")
+    )
+    .reindex(rq2_group_order)
 )
-#RQ2 model1:general self-esteem
-model_self_esteem = smf.wls(
-    formula=(
-        "self_esteem_score_z ~ " 
-        "online_self_image_score_z +" #將online和offline同時放入同一個regression
-        "offline_self_image_score_z + "
-        "female + bs3_z"
-    ),
-    data=rq2_self_esteem,
-    weights=rq2_self_esteem["HOUWGT"]
-).fit(
+rq2_group_summary["percentage"] = (
+    rq2_group_summary["n"] / len(rq2_desc) * 100
+)
+
+print("\n" + "=" * 60)
+print("RQ2 (revised): Selective presentation and self-image groups")
+print("=" * 60)
+print("\nRQ2 descriptive sample N =", len(rq2_desc))
+print("\nThree self-image groups and Selective means (unweighted):")
+print(rq2_group_summary.round(3).to_string())
+
+# RQ2B. 依 Selective 原始平均分數分成 Low / Medium / High
+# 注意：這些是探索性固定區間，不是原問卷官方分級
+# Low <= 2, 2 < Medium <= 3, 3 < High <= 4
+rq2_desc["selective_group"] = pd.cut(
+    rq2_desc["selective_presentation_score"],
+    bins=[0, 2, 3, 4],
+    labels=["Low", "Medium", "High"],
+    include_lowest=True
+)
+
+rq2_counts = pd.crosstab(
+    rq2_desc["selective_group"], rq2_desc["image_group"]
+).reindex(columns=rq2_group_order, fill_value=0)
+
+rq2_percentages = (
+    pd.crosstab(
+        rq2_desc["selective_group"],
+        rq2_desc["image_group"],
+        normalize="index"
+    )
+    .reindex(columns=rq2_group_order, fill_value=0)
+    * 100
+)
+
+print("\nSelective Low/Medium/High vs. self-image group — counts:")
+print(rq2_counts.to_string())
+print("\nSelective Low/Medium/High vs. self-image group — row %:")
+print(rq2_percentages.round(2).to_string())
+
+rq2_pearson_r = rq2_desc[
+    ["selective_presentation_score", "self_image_gap"]
+].corr().iloc[0, 1]
+print("\nPearson r (Selective vs. signed Online-Offline gap):",
+      round(rq2_pearson_r, 4))
+
+# RQ2C. Multinomial logistic regression（三組分類）
+# 以 Online < Offline (=0) 為參照組，直接檢驗核心假設。
+# 0 = Online < Offline (reference)
+# 1 = Online = Offline
+# 2 = Online > Offline
+rq2_model_vars = [
+    "selective_presentation_score",
+    "self_image_gap",
+    "female",
+    "bs3",
+    "nschool_id"
+]
+rq2_model_data = topic1[rq2_model_vars].dropna().copy()
+rq2_model_data["image_group"] = np.select(
+    [
+        rq2_model_data["self_image_gap"] < -rq2_gap_tolerance,
+        rq2_model_data["self_image_gap"] > rq2_gap_tolerance
+    ],
+    [0, 2],
+    default=1
+).astype(int)
+
+rq2_X = sm.add_constant(
+    rq2_model_data[["selective_presentation_score", "female", "bs3"]]
+)
+rq2_y = rq2_model_data["image_group"]
+
+rq2_mnlogit_model = sm.MNLogit(rq2_y, rq2_X)
+rq2_mnlogit_result = rq2_mnlogit_model.fit(
+    method="newton",
+    maxiter=200,
+    disp=False,
     cov_type="cluster",
-    cov_kwds={
-        "groups": rq2_self_esteem["nschool_id"]
-    }
-)
-print("\nRQ2 Model 1: General Self-esteem")
-print(model_self_esteem.summary())
-
-#24. well being sample
-rq2_wellbeing = prepare_rq2_sample(
-    "wellbeing_score"
-)
-print(
-    "\nRQ2 Well-being analytic sample:",
-    len(rq2_wellbeing)
+    cov_kwds={"groups": rq2_model_data["nschool_id"]}
 )
 
-rq2_wellbeing_vars = [
-    "online_self_image_score",
-    "offline_self_image_score",
-    "wellbeing_score",
-    "bs3"
+print("\nRQ2 MNLogit sample N =", len(rq2_model_data))
+print("Reference category: 0 = Online < Offline")
+print("1 = Equal vs. Online < Offline")
+print("2 = Online > Offline vs. Online < Offline")
+print(rq2_mnlogit_result.summary())
+
+print("\nRQ2 Relative Risk Ratios (RRR = exp(coef)):")
+print(np.exp(rq2_mnlogit_result.params).round(4).to_string())
+
+# 第二欄 (index 1) 對應類別 2 = Online > Offline vs. Online < Offline
+rq2_main_b = rq2_mnlogit_result.params.loc[
+    "selective_presentation_score", 1
+]
+rq2_main_se = rq2_mnlogit_result.bse.loc[
+    "selective_presentation_score", 1
+]
+rq2_main_p = rq2_mnlogit_result.pvalues.loc[
+    "selective_presentation_score", 1
+]
+print("\nRQ2 MAIN contrast: Online > Offline vs. Online < Offline")
+print("Selective beta =", round(rq2_main_b, 4))
+print("Selective cluster-robust SE =", round(rq2_main_se, 4))
+print("Selective RRR =", round(np.exp(rq2_main_b), 4))
+print("RRR 95% CI =", tuple(float(v) for v in np.exp([
+    rq2_main_b - 1.96 * rq2_main_se,
+    rq2_main_b + 1.96 * rq2_main_se
+]).round(4)))
+print("Selective p =", rq2_main_p)
+
+#RQ2D 權重穩健性
+# 1. Prepare data
+cols = [
+    "selective_presentation_score", "self_image_gap",
+    "female", "bs3", "HOUWGT", "nschool_id"
 ]
 
-for col in rq2_wellbeing_vars:
-    rq2_wellbeing[col + "_z"] = (
-        rq2_wellbeing[col]
-        - rq2_wellbeing[col].mean()
-    ) / rq2_wellbeing[col].std()
+data = topic1[cols].dropna().copy()
 
-print("\nStandardized RQ2 Well-being variables:")
-print(
-    rq2_wellbeing[
-        [col + "_z" for col in rq2_wellbeing_vars]
-    ]
-    .describe()
-    .round(3)
+data["image_group"] = np.select(
+    [
+        data["self_image_gap"] < -rq2_gap_tolerance,
+        data["self_image_gap"] > rq2_gap_tolerance
+    ],
+    [0, 2],
+    default=1
+).astype(int)
+
+X = sm.add_constant(
+    data[["selective_presentation_score", "female", "bs3"]]
 )
 
-#RQ2 model2: Well-being
-model_wellbeing = smf.wls(
-    formula=(
-        "wellbeing_score_z ~ "
-        "online_self_image_score_z + "
-        "offline_self_image_score_z + "
-        "female + bs3_z"
-    ),
-    data=rq2_wellbeing,
-    weights=rq2_wellbeing["HOUWGT"]
-).fit(
-    cov_type="cluster",
-    cov_kwds={
-        "groups": rq2_wellbeing["nschool_id"]
-    }
-)
-print("\nRQ2 Model 2: Well-being")
-print(model_wellbeing.summary())
+y = data["image_group"].to_numpy()
+w = data["HOUWGT"].to_numpy()
+w = w / w.mean()
 
-#25. Prepare RQ2 depression samplw
-rq2_depression = prepare_rq2_sample(
-    "depression_score"
-)
-print(
-    "\nRQ2 Depression analytic sample:",
-    len(rq2_depression)
-)
-#標準化Depression model
-rq2_depression_vars = [
-    "online_self_image_score",
-    "offline_self_image_score",
-    "depression_score",
-    "bs3"
-]
+X_np = X.to_numpy()
+n, k = X_np.shape
 
-for col in rq2_depression_vars:
-    rq2_depression[col + "_z"] = (
-        rq2_depression[col]
-        - rq2_depression[col].mean()
-    ) / rq2_depression[col].std()
-
-print("\nStandardized RQ2 Depression variables:")
-print(
-    rq2_depression[
-        [col + "_z" for col in rq2_depression_vars]
-    ]
-    .describe()
-    .round(3)
-)
-#RQ2 model3: Depressive symptoms
-model_depression = smf.wls(
-    formula=(
-        "depression_score_z ~ "
-        "online_self_image_score_z + "
-        "offline_self_image_score_z + "
-        "female + bs3_z"
-    ),
-    data=rq2_depression,
-    weights=rq2_depression["HOUWGT"]
-).fit(
-    cov_type="cluster",
-    cov_kwds={
-        "groups": rq2_depression["nschool_id"]
-    }
+# 2. Unweighted comparison on the same sample
+unweighted = sm.MNLogit(y, X).fit(
+    method="newton", maxiter=200, disp=False
 )
 
-print("\nRQ2 Model 3: Depressive Symptoms")
-print(model_depression.summary())
+# 3. Weighted negative log-likelihood and gradient
+def weighted_objective(theta):
+    B = theta.reshape(k, 2)
 
-#26. RQ2 online vs offline coefficieint contrasts
-contrast_self_esteem=model_self_esteem.t_test(
-    "online_self_image_score_z -"
-    "offline_self_image_score_z=0"
-)
-print("\nSelf-esteem Online-Offline")
-print(contrast_self_esteem)
-contrast_wellbeing = model_wellbeing.t_test(
-    "online_self_image_score_z - "
-    "offline_self_image_score_z = 0"
-)
+    eta = np.column_stack([
+        np.zeros(n), X_np @ B
+    ])
+    log_p = eta - logsumexp(eta, axis=1, keepdims=True)
+    p = np.exp(log_p)
 
-contrast_depression = model_depression.t_test(
-    "online_self_image_score_z - "
-    "offline_self_image_score_z = 0"
-)
+    observed = np.column_stack([y == 1, y == 2]).astype(float)
 
-print("\nWell-being: Online - Offline")
-print(contrast_wellbeing)
-
-print("\nDepressive Symptoms: Online - Offline")
-print(contrast_depression)
-
-#27. RQ2 穩健性: separart self-image models
-
-model_self_esteem_online_only = smf.wls(
-    formula=(
-        "self_esteem_score_z ~ "
-        "online_self_image_score_z + "
-        "female + bs3_z"
-    ),
-    data=rq2_self_esteem,
-    weights=rq2_self_esteem["HOUWGT"]
-).fit(
-    cov_type="cluster",
-    cov_kwds={
-        "groups": rq2_self_esteem["nschool_id"]
-    }
-)
-
-print("\nSelf-esteem: Online-only model")
-print(model_self_esteem_online_only.summary())
-#online only beta=+.040=> online 本身與self-esteem 不是負向關聯，負係數是在控制offline self image後才出現
-def fit_single_predictor_model(data, outcome, predictor):
-    model = smf.wls(
-        formula=f"{outcome} ~ {predictor} + female + bs3_z",
-        data=data,
-        weights=data["HOUWGT"]
-    ).fit(
-        cov_type="cluster",
-        cov_kwds={
-            "groups": data["nschool_id"]
-        }
+    loss = -np.sum(w * log_p[np.arange(n), y])
+    gradient = -X_np.T @ (
+        w[:, None] * (observed - p[:, 1:])
     )
 
-    return model
+    return loss, gradient.ravel()
 
-
-# Self-esteem
-model_self_esteem_offline_only = fit_single_predictor_model(
-    rq2_self_esteem,
-    "self_esteem_score_z",
-    "offline_self_image_score_z"
+# 4. Weighted parameter estimation
+fit = minimize(
+    weighted_objective,
+    unweighted.params.to_numpy().ravel(),
+    method="BFGS",
+    jac=True,
+    options={"maxiter": 1000, "gtol": 1e-5}
 )
 
-# Well-being
-model_wellbeing_online_only = fit_single_predictor_model(
-    rq2_wellbeing,
-    "wellbeing_score_z",
-    "online_self_image_score_z"
+if not fit.success:
+    raise RuntimeError(f"Weighted MNLogit failed: {fit.message}")
+
+B = fit.x.reshape(k, 2)
+eta = np.column_stack([np.zeros(n), X_np @ B])
+p_hat = np.exp(eta - logsumexp(eta, axis=1, keepdims=True))
+
+# 5. Cluster-robust sandwich covariance
+H = np.zeros((2 * k, 2 * k))
+
+for j in range(2):
+    for l in range(2):
+        factor = w * p_hat[:, j + 1] * (
+            (j == l) - p_hat[:, l + 1]
+        )
+        H[j::2, l::2] = X_np.T @ (factor[:, None] * X_np)
+
+observed = np.column_stack([y == 1, y == 2]).astype(float)
+residuals = w[:, None] * (observed - p_hat[:, 1:])
+
+clusters, cluster_id = np.unique(
+    data["nschool_id"].to_numpy(),
+    return_inverse=True
 )
 
-model_wellbeing_offline_only = fit_single_predictor_model(
-    rq2_wellbeing,
-    "wellbeing_score_z",
-    "offline_self_image_score_z"
-)
+scores = np.zeros((len(clusters), 2 * k))
 
-# Depression
-model_depression_online_only = fit_single_predictor_model(
-    rq2_depression,
-    "depression_score_z",
-    "online_self_image_score_z"
-)
-
-model_depression_offline_only = fit_single_predictor_model(
-    rq2_depression,
-    "depression_score_z",
-    "offline_self_image_score_z"
-)
-print("\nRQ2 Robustness — Single-predictor models")
-
-print(
-    "Self-esteem | Online:",
-    round(model_self_esteem_online_only.params["online_self_image_score_z"], 4),
-    "| Offline:",
-    round(model_self_esteem_offline_only.params["offline_self_image_score_z"], 4)
-)
-
-print(
-    "Well-being  | Online:",
-    round(model_wellbeing_online_only.params["online_self_image_score_z"], 4),
-    "| Offline:",
-    round(model_wellbeing_offline_only.params["offline_self_image_score_z"], 4)
-)
-
-print(
-    "Depression  | Online:",
-    round(model_depression_online_only.params["online_self_image_score_z"], 4),
-    "| Offline:",
-    round(model_depression_offline_only.params["offline_self_image_score_z"], 4)
-)
-#28. RQ2 Mean-Difference Reparameterization
-rq2_self_esteem["self_image_mean"] = (
-    rq2_self_esteem["online_self_image_score_z"]
-    + rq2_self_esteem["offline_self_image_score_z"]
-) / 2
-
-rq2_self_esteem["self_image_difference"] = (
-    rq2_self_esteem["online_self_image_score_z"]
-    - rq2_self_esteem["offline_self_image_score_z"]
-)
-
-model_self_esteem_mean_diff = smf.wls(
-    formula=(
-        "self_esteem_score_z ~ "
-        "self_image_mean + "
-        "self_image_difference + "
-        "female + bs3_z"
-    ),
-    data=rq2_self_esteem,
-    weights=rq2_self_esteem["HOUWGT"]
-).fit(
-    cov_type="cluster",
-    cov_kwds={
-        "groups": rq2_self_esteem["nschool_id"]
-    }
-)
-
-print("\nSelf-esteem Mean-Difference Model")
-print(
-    model_self_esteem_mean_diff.params[
-        ["self_image_mean", "self_image_difference"]
-    ].round(4)
-)
-for data in [rq2_wellbeing, rq2_depression]:
-    data["self_image_mean"] = (
-        data["online_self_image_score_z"]
-        + data["offline_self_image_score_z"]
-    ) / 2
-
-    data["self_image_difference"] = (
-        data["online_self_image_score_z"]
-        - data["offline_self_image_score_z"]
+for j in range(2):
+    np.add.at(
+        scores[:, j::2],
+        cluster_id,
+        residuals[:, j, None] * X_np
     )
 
+bread = np.linalg.inv(H)
+cov = bread @ (scores.T @ scores) @ bread
 
-model_wellbeing_mean_diff = smf.wls(
-    formula=(
-        "wellbeing_score_z ~ "
-        "self_image_mean + self_image_difference + "
-        "female + bs3_z"
-    ),
-    data=rq2_wellbeing,
-    weights=rq2_wellbeing["HOUWGT"]
-).fit(
-    cov_type="cluster",
-    cov_kwds={"groups": rq2_wellbeing["nschool_id"]}
+G = len(clusters)
+cov *= (G / (G - 1)) * ((n - 1) / (n - 2 * k))
+
+# 6. Main contrast: Online > Offline vs. Online < Offline
+idx = list(X.columns).index("selective_presentation_score") * 2 + 1
+
+beta = fit.x[idx]
+se = np.sqrt(cov[idx, idx])
+z = beta / se
+p_value = 2 * norm.sf(abs(z))
+
+weighted_rrr = np.exp(beta)
+unweighted_rrr = np.exp(
+    unweighted.params.loc["selective_presentation_score", 1]
 )
 
+ci = np.exp([beta - 1.96 * se, beta + 1.96 * se])
 
-model_depression_mean_diff = smf.wls(
-    formula=(
-        "depression_score_z ~ "
-        "self_image_mean + self_image_difference + "
-        "female + bs3_z"
-    ),
-    data=rq2_depression,
-    weights=rq2_depression["HOUWGT"]
-).fit(
-    cov_type="cluster",
-    cov_kwds={"groups": rq2_depression["nschool_id"]}
-)
-
-
-print("\nWell-being Mean-Difference Model")
-print(
-    model_wellbeing_mean_diff.params[
-        ["self_image_mean", "self_image_difference"]
-    ].round(4)
-)
-
-print("\nDepression Mean-Difference Model")
-print(
-    model_depression_mean_diff.params[
-        ["self_image_mean", "self_image_difference"]
-    ].round(4)
-)
+print("\n=== RQ2D: Weighted Robustness Check ===")
+print("N =", n, "| School clusters =", G)
+print("Unweighted RRR =", round(unweighted_rrr, 4))
+print("Weighted RRR =", round(weighted_rrr, 4))
+print("Beta =", round(beta, 4))
+print("Cluster-robust SE =", round(se, 4))
+print("RRR 95% CI =", ci.round(4))
+print("p =", p_value)
 #在相同整體 self-image 水準下，self-image 越呈現 Online > Offline 的相對配置，與較低 Self-esteem、較低 Well-being、較高 Depressive symptoms 有關。
 
 # ============================================================
