@@ -777,160 +777,206 @@ print(
     ].round(4)
 )
 #在相同整體 self-image 水準下，self-image 越呈現 Online > Offline 的相對配置，與較低 Self-esteem、較低 Well-being、較高 Depressive symptoms 有關。
-#29. RQ3A Gender Moderation of selective presentation
-model_online_gender = smf.wls(
-    formula=(
-        "online_self_image_score_z ~ "
-        "selective_presentation_score_z * female + "
-        "bs3_z"
-    ),
-    data=rq1,
-    weights=rq1["HOUWGT"]
-).fit(
-    cov_type="cluster",
-    cov_kwds={"groups": rq1["nschool_id"]}
-)
 
-model_offline_gender = smf.wls(
-    formula=(
-        "offline_self_image_score_z ~ "
-        "selective_presentation_score_z * female + "
-        "bs3_z"
-    ),
-    data=rq1,
-    weights=rq1["HOUWGT"]
-).fit(
-    cov_type="cluster",
-    cov_kwds={"groups": rq1["nschool_id"]}
-)
+# ============================================================
+# RQ3（修改版）：Online／Offline 自我形象「哪一邊比較高」與心理狀態
+# ------------------------------------------------------------
+# 取代原本的 RQ3 性別調節分析。
+#
+# 依 Online − Offline 原始分數（1–4 量尺）把學生分成三組：
+#   Online > Offline：線上自我形象高於線下
+#   Equal           ：兩者相同（作為比較基準）
+#   Offline > Online：線下自我形象高於線上
+#
+# RQ3A｜三組之間的心理狀態是否不同？
+#   outcome_z ~ 落差組別 (ref = Equal) + 整體自我形象水準 + female + bs3
+#
+# RQ3B｜在同一個方向上，落差越大，心理狀態是否越好／越差？
+#   (1) Online > Offline：樣本 = Equal + Online > Offline
+#   (2) Offline > Online：樣本 = Equal + Offline > Online
+#   outcome_z ~ 落差大小（原始分數，0–3）+ 整體自我形象水準 + female + bs3
+#
+# 控制「整體自我形象水準」= (Online + Offline) / 2，
+# 讓係數代表「在同樣的整體自我形象下，偏向某一邊」的關聯，
+# 而不是單純反映「線下自我形象高的人心理比較好」。
+#
+# 全部採 HOUWGT 加權＋學校層級 cluster-robust SE（與 RQ1、RQ2 相同）。
+# ============================================================
 
-print("\nRQ3A Gender Moderation")
-
-print(
-    "Online interaction:",
-    round(
-        model_online_gender.params[
-            "selective_presentation_score_z:female"
-        ], 4
-    ),
-    "p =",
-    round(
-        model_online_gender.pvalues[
-            "selective_presentation_score_z:female"
-        ], 4
-    )
-)
-
-print(
-    "Offline interaction:",
-    round(
-        model_offline_gender.params[
-            "selective_presentation_score_z:female"
-        ], 4
-    ),
-    "p =",
-    round(
-        model_offline_gender.pvalues[
-            "selective_presentation_score_z:female"
-        ], 4
-    )
-)
-#性別對 Selective Positive Self-presentation 與 Offline Positive Self-image 之間的關聯具有顯著調節效果
-#online moderation不顯著
-
-#30. RQ 3B Gender 是否也會調節 Online / Offline self-image 與三個 psychological outcomes 的關聯
-def fit_gender_moderation(data,outcome):
-    model=smf.wls(
-        formula=(
-            f"{outcome}~"
-            "online_self_image_score_z*female +"
-            "offline_self_image_score_z*female+"
-            "bs3_z"
-        ),
-        data=data,
-        weights=data["HOUWGT"]
-    ).fit(
-        cov_type="cluster",
-        cov_kwds={"groups": data["nschool_id"]}    
-    )
-    return model
-
-
-model_self_esteem_gender = fit_gender_moderation(
-    rq2_self_esteem,
-    "self_esteem_score_z"
-)
-
-model_wellbeing_gender = fit_gender_moderation(
-    rq2_wellbeing,
-    "wellbeing_score_z"
-)
-
-model_depression_gender = fit_gender_moderation(
-    rq2_depression,
-    "depression_score_z"
-)
-
-models_gender = {
-    "Self-esteem": model_self_esteem_gender,
-    "Well-being": model_wellbeing_gender,
-    "Depression": model_depression_gender
+rq3_outcomes = {
+    "Self-esteem": "self_esteem_score",
+    "Well-being": "wellbeing_score",
+    "Depressive symptoms": "depression_score",
 }
 
-for name, model in models_gender.items():
+rq3_base = topic1[[
+    "online_self_image_score",
+    "offline_self_image_score",
+    "self_esteem_score",
+    "wellbeing_score",
+    "depression_score",
+    "female",
+    "bs3",
+    "HOUWGT",
+    "nschool_id",
+]].dropna(subset=[
+    "online_self_image_score",
+    "offline_self_image_score",
+    "female", "bs3", "HOUWGT", "nschool_id",
+]).copy()
 
-    online_int = "online_self_image_score_z:female"
-    offline_int = "offline_self_image_score_z:female"
+# 落差（原始量尺；三題平均相減，四捨五入避免浮點誤差）
+rq3_base["gap"] = (
+    rq3_base["online_self_image_score"]
+    - rq3_base["offline_self_image_score"]
+).round(4)
 
-    print(f"\n{name}")
+rq3_base["gap_group"] = np.select(
+    [rq3_base["gap"] > 0, rq3_base["gap"] < 0],
+    ["Online > Offline", "Offline > Online"],
+    default="Equal",
+)
+rq3_base["gap_size"] = rq3_base["gap"].abs()
 
-    print(
-        "Online × Female:",
-        round(model.params[online_int], 4),
-        "p =",
-        round(model.pvalues[online_int], 4)
+# 整體自我形象水準
+rq3_base["self_image_level"] = (
+    rq3_base["online_self_image_score"]
+    + rq3_base["offline_self_image_score"]
+) / 2
+
+print("\n" + "=" * 60)
+print("RQ3 (revised): Online–Offline self-image direction")
+print("=" * 60)
+print("\nGroup sizes:")
+print(
+    rq3_base["gap_group"]
+    .value_counts()
+    .reindex(["Online > Offline", "Equal", "Offline > Online"])
+)
+
+
+def zscore(x):
+    return (x - x.mean()) / x.std()
+
+
+def fit_weighted_cluster(formula, data):
+    return smf.wls(
+        formula=formula,
+        data=data,
+        weights=data["HOUWGT"],
+    ).fit(
+        cov_type="cluster",
+        cov_kwds={"groups": data["nschool_id"]},
     )
 
-    print(
-        "Offline × Female:",
-        round(model.params[offline_int], 4),
-        "p =",
-        round(model.pvalues[offline_int], 4)
+
+def prepare_rq3_sample(data, outcome):
+    """Complete cases for one outcome; standardize within that sample."""
+    sample = data.dropna(subset=[outcome]).copy()
+    sample["outcome_z"] = zscore(sample[outcome])
+    sample["level_z"] = zscore(sample["self_image_level"])
+    sample["bs3_z"] = zscore(sample["bs3"])
+    return sample
+
+
+# ------------------------------------------------------------
+# RQ3A：三組比較（Equal 為基準）
+# ------------------------------------------------------------
+print("\n--- RQ3A: Group differences vs. Equal (standardized outcome) ---")
+
+group_term = 'C(gap_group, Treatment(reference="Equal"))'
+rq3a_rows = []
+
+for label, outcome in rq3_outcomes.items():
+    sample = prepare_rq3_sample(rq3_base, outcome)
+    model = fit_weighted_cluster(
+        f"outcome_z ~ {group_term} + level_z + female + bs3_z",
+        sample,
     )
+    for grp in ["Online > Offline", "Offline > Online"]:
+        term = f"{group_term}[T.{grp}]"
+        ci = model.conf_int().loc[term]
+        rq3a_rows.append({
+            "Outcome": label,
+            "Group (vs. Equal)": grp,
+            "b": model.params[term],
+            "CI_low": ci[0],
+            "CI_high": ci[1],
+            "p": model.pvalues[term],
+            "N": int(model.nobs),
+        })
+
+rq3a_table = pd.DataFrame(rq3a_rows)
+print(rq3a_table.round(4).to_string(index=False))
+
+# ------------------------------------------------------------
+# RQ3B：同方向內，落差大小 → 心理狀態
+# ------------------------------------------------------------
+rq3_directions = {
+    "Online > Offline": ["Equal", "Online > Offline"],
+    "Offline > Online": ["Equal", "Offline > Online"],
+}
 
 
-    print("\n=== RQ1 OFFLINE CHECK ===")
+def run_rq3b(include_equal=True, control_level=True):
+    rows = []
+    for direction, groups in rq3_directions.items():
+        keep = groups if include_equal else [direction]
+        subset = rq3_base[rq3_base["gap_group"].isin(keep)]
+        for label, outcome in rq3_outcomes.items():
+            sample = prepare_rq3_sample(subset, outcome)
+            rhs = "gap_size + female + bs3_z"
+            if control_level:
+                rhs += " + level_z"
+            model = fit_weighted_cluster(f"outcome_z ~ {rhs}", sample)
+            ci = model.conf_int().loc["gap_size"]
+            rows.append({
+                "Direction": direction,
+                "Outcome": label,
+                "b_per_1pt_gap": model.params["gap_size"],
+                "CI_low": ci[0],
+                "CI_high": ci[1],
+                "p": model.pvalues["gap_size"],
+                "N": int(model.nobs),
+            })
+    return pd.DataFrame(rows)
 
-print("Standalone Offline")
-print(
-    model_offline.params[
-        ["Intercept",
-         "selective_presentation_score_z",
-         "female",
-         "bs3_z"]
-    ]
+
+print("\n--- RQ3B (main): gap size → outcome_z, Equal group as 0 anchor ---")
+print("    controls: overall self-image level, female, SES")
+rq3b_main = run_rq3b(include_equal=True, control_level=True)
+print(rq3b_main.round(4).to_string(index=False))
+
+# 敏感度 1：只用該方向的學生（不含 Equal）
+print("\n--- RQ3B sensitivity 1: within-direction only (Equal excluded) ---")
+print(run_rq3b(include_equal=False, control_level=True).round(4).to_string(index=False))
+
+# 敏感度 2：不控制整體自我形象水準
+print("\n--- RQ3B sensitivity 2: without controlling overall self-image level ---")
+print(run_rq3b(include_equal=True, control_level=False).round(4).to_string(index=False))
+
+# ------------------------------------------------------------
+# 描述統計：各組加權平均（原始量尺）
+# ------------------------------------------------------------
+print("\n--- Weighted descriptive means by group (original scales) ---")
+
+
+def weighted_mean(x, w):
+    ok = x.notna()
+    return np.average(x[ok], weights=w[ok])
+
+
+desc = (
+    rq3_base
+    .groupby("gap_group")
+    .apply(lambda g: pd.Series({
+        label: weighted_mean(g[outcome], g["HOUWGT"])
+        for label, outcome in rq3_outcomes.items()
+    } | {
+        "Online": weighted_mean(g["online_self_image_score"], g["HOUWGT"]),
+        "Offline": weighted_mean(g["offline_self_image_score"], g["HOUWGT"]),
+        "n": len(g),
+    }), include_groups=False)
+    .reindex(["Online > Offline", "Equal", "Offline > Online"])
 )
-
-print("\nStacked Offline")
-print(
-    model_slope_difference.params[
-        ["Intercept",
-         "selective_presentation_score_z",
-         "female",
-         "bs3_z"]
-    ]
-)
-
-print("\nRQ1 sample N:", len(rq1))
-print("Long sample N:", len(rq1_long))
-
-print("\nRQ1 weight sum:", rq1["HOUWGT"].sum())
-
-print(
-    "Long Offline weight sum:",
-    rq1_long.loc[
-        rq1_long["online_type"] == 0,
-        "HOUWGT"
-    ].sum()
-)
-
+print(desc.round(3).to_string())

@@ -572,149 +572,241 @@ plt.show()
 
 
 # ============================================================
-# FIGURE 3A–3B
-# Gender moderation:
-# Selective presentation → Online (3A) / Offline (3B) self-image
-# Same style as Figure 1; one figure per self-image type.
+# FIGURE 3A–3B（修改版 RQ3）
+# Online / Offline self-image direction → Psychological outcomes
 #
-# Model (same as topic1.py RQ3A, weighted + clustered):
-#   self_image_z ~ selective_z * female + family_ses_z
+# 取代原本的性別調節圖（Gender moderation）。
+#   Figure 3A：線上自我形象 > 線下自我形象 的學生，落差越大，心理狀態如何變化
+#   Figure 3B：線下自我形象 > 線上自我形象 的學生，落差越大，心理狀態如何變化
+#
+# Model (same as topic1_final_v2.py RQ3B):
+#   sample  = Equal group (gap = 0, anchor) + students in that direction
+#   outcome ~ gap_size + self_image_level_z + female + family_ses_z
 #   WLS with HOUWGT, school-clustered SE (nschool_id)
 #
-# Lines show boys (female = 0) and girls (female = 1) with family
-# SES held at its mean. β labels are the simple slopes per gender.
+# Lines = model-estimated values (covariates at weighted sample means),
+# bands = 95% CI, grey dots = unadjusted weighted means per gap value
+# (n >= 30 only). β = change in standardized outcome per 1-point gap.
 # ============================================================
 
-fig3_data = df[[
-    "selective_presentation_score",
+# ------------------------------------------------------------
+# 1. Build scales（規則與 topic1_final.py 相同：負數 → 遺漏，題目需全答）
+# ------------------------------------------------------------
+fig3_items = {
+    "online_self_image_score": ["bs25a", "bs25b", "bs25c"],
+    "offline_self_image_score": ["bs25d", "bs25e", "bs25f"],
+    "self_esteem_score": ["bs53a", "bs53b", "bs53c"],
+    "wellbeing_score": [f"bs58{c}" for c in "abcde"],
+    "depression_score": [f"bs56{c}" for c in "abcdefghijklmn"],
+}
+
+fig3_data = pd.DataFrame(index=df.index)
+for score, items in fig3_items.items():
+    x = df[items].apply(pd.to_numeric, errors="coerce")
+    x = x.where(x >= 0)
+    fig3_data[score] = x.mean(axis=1).where(x.notna().sum(axis=1) == len(items))
+
+fig3_bs1 = pd.to_numeric(df["bs1"], errors="coerce")
+fig3_data["female"] = fig3_bs1.map({1: 1, 2: 0})
+fig3_bs3 = pd.to_numeric(df["bs3"], errors="coerce")
+fig3_data["family_ses"] = fig3_bs3.where(fig3_bs3.between(1, 10))
+fig3_w = pd.to_numeric(df["HOUWGT"], errors="coerce")
+fig3_data["HOUWGT"] = fig3_w.where(fig3_w > 0)
+fig3_data["nschool_id"] = df["nschool_id"]
+
+fig3_data = fig3_data.dropna(subset=[
     "online_self_image_score", "offline_self_image_score",
-    "bs1", "bs3", "HOUWGT", "nschool_id"
-]].copy()
-fig3_data["female"] = (fig3_data["bs1"] == 1).astype(int)
-fig3_data["family_ses"] = fig3_data["bs3"].where(fig3_data["bs3"].between(1, 10))
-fig3_data = fig3_data.drop(columns=["bs1", "bs3"]).dropna()
+    "female", "family_ses", "HOUWGT", "nschool_id",
+])
 
-# Standardize within the shared analytic sample (as in topic1.py RQ3A)
-for col in ["selective_presentation_score", "online_self_image_score",
-            "offline_self_image_score", "family_ses"]:
-    fig3_data[col + "_z"] = zscore(fig3_data[col])
+# Online − Offline gap and direction groups
+fig3_data["gap"] = (
+    fig3_data["online_self_image_score"]
+    - fig3_data["offline_self_image_score"]
+).round(4)
+fig3_data["gap_group"] = np.select(
+    [fig3_data["gap"] > 0, fig3_data["gap"] < 0],
+    ["Online > Offline", "Offline > Online"],
+    default="Equal",
+)
+fig3_data["gap_size"] = fig3_data["gap"].abs()
+fig3_data["self_image_level"] = (
+    fig3_data["online_self_image_score"]
+    + fig3_data["offline_self_image_score"]
+) / 2
 
-print("Figure 3 analytic N =", len(fig3_data))
+print("\nFigure 3 group sizes:")
+print(fig3_data["gap_group"].value_counts())
+
+# ------------------------------------------------------------
+# 2. Settings
+# ------------------------------------------------------------
+fig3_outcomes = [
+    {"var": "self_esteem_score", "name": "Self-esteem",
+     "ylabel": "Self-esteem (1–4)", "ylim": (1, 4), "color": "#7B3294"},
+    {"var": "wellbeing_score", "name": "Well-being",
+     "ylabel": "Well-being (0–5)", "ylim": (0, 5), "color": "#1B9E77"},
+    {"var": "depression_score", "name": "Depressive symptoms",
+     "ylabel": "Depressive symptoms (0–5)", "ylim": (0, 5), "color": "#D95F02"},
+]
+
+fig3_specs = [
+    {
+        "direction": "Online > Offline",
+        "file": "figure3a_online_higher_outcomes.png",
+        "title": "When Online Self-image Exceeds Offline Self-image",
+        "xlabel": "Online − Offline self-image gap (scale points)",
+    },
+    {
+        "direction": "Offline > Online",
+        "file": "figure3b_offline_higher_outcomes.png",
+        "title": "When Offline Self-image Exceeds Online Self-image",
+        "xlabel": "Offline − Online self-image gap (scale points)",
+    },
+]
+
+FIG3_INK = "#333333"
+FIG3_MUTED = "#777777"
+FIG3_GRID = "#E6E6E6"
+FIG3_DOT = "#9A9A9A"
+FIG3_MIN_N_DOT = 30
+
+
+def fit_weighted_cluster(formula, d):
+    return smf.wls(formula, data=d, weights=d["HOUWGT"]).fit(
+        cov_type="cluster", cov_kwds={"groups": d["nschool_id"]}
+    )
 
 
 def fmt_p(p):
     return "p < .001" if p < .001 else "p = " + f"{p:.3f}".lstrip("0")
 
 
-fig3_specs = [
-    {
-        "var": "online_self_image_score",
-        "kind": "Online",
-        # Online palette (Figure 1 blue): boys darker, girls lighter
-        "colors": {"Male": "#1f4e79", "Female": "#5b9bd5"},
-        "file": "figure3a_gender_moderation_online.png",
-    },
-    {
-        "var": "offline_self_image_score",
-        "kind": "Offline",
-        # Offline palette (Figure 1 red): boys darker, girls lighter
-        "colors": {"Male": "#9e1b1b", "Female": "#e8726b"},
-        "file": "figure3b_gender_moderation_offline.png",
-    },
-]
+# ------------------------------------------------------------
+# 3. Plot — 三個心理結果畫在同一張圖（風格同 Figure 2D）
+#    顏色 = 心理結果；線 = 模型估計值；陰影 = 95% CI；
+#    小點 = 各落差值的未調整加權平均。
+#    三個結果共用 0–5 的 y 軸（涵蓋 self-esteem 1–4、
+#    well-being 0–5、depressive symptoms 0–5 的原始範圍）。
+# ------------------------------------------------------------
+for spec in fig3_specs:
+    subset = fig3_data[fig3_data["gap_group"].isin(["Equal", spec["direction"]])]
 
+    fig, ax = plt.subplots(figsize=(11, 7))
+    end_labels = []   # (y at x = 3, text, colour)
 
-def draw_figure3(spec):
-    y = spec["var"]
-    d = fig3_data
+    for out in fig3_outcomes:
+        d = subset.dropna(subset=[out["var"]]).copy()
+        d["level_z"] = zscore(d["self_image_level"])
+        d["family_ses_z"] = zscore(d["family_ses"])
+        d["outcome_z"] = zscore(d[out["var"]])
 
-    model = smf.wls(
-        f"{y}_z ~ selective_presentation_score_z * female + family_ses_z",
-        data=d,
-        weights=d["HOUWGT"],
-    ).fit(cov_type="cluster", cov_kwds={"groups": d["nschool_id"]})
+        rhs = "gap_size + level_z + female + family_ses_z"
+        m_raw = fit_weighted_cluster(f"{out['var']} ~ {rhs}", d)   # original scale → line
+        m_std = fit_weighted_cluster(f"outcome_z ~ {rhs}", d)      # standardized → β
 
-    b = model.params
-    inter = "selective_presentation_score_z:female"
-    slope_m = b["selective_presentation_score_z"]
-    slope_f = slope_m + b[inter]
-    p_inter = model.pvalues[inter]
+        # Model-estimated line, covariates at weighted sample means
+        grid = pd.DataFrame({
+            "gap_size": np.linspace(0, 3, 61),
+            "level_z": np.average(d["level_z"], weights=d["HOUWGT"]),
+            "female": np.average(d["female"], weights=d["HOUWGT"]),
+            "family_ses_z": np.average(d["family_ses_z"], weights=d["HOUWGT"]),
+        })
+        pred = m_raw.get_prediction(grid).summary_frame(alpha=0.05)
 
-    print(f"Figure 3 ({spec['kind']}): male slope = {slope_m:.4f}, "
-          f"female slope = {slope_f:.4f}, "
-          f"interaction = {b[inter]:.4f} ({fmt_p(p_inter)})")
+        ax.fill_between(grid["gap_size"], pred["mean_ci_lower"],
+                        pred["mean_ci_upper"], color=out["color"],
+                        alpha=0.15, linewidth=0)
+        ax.plot(grid["gap_size"], pred["mean"], color=out["color"],
+                linewidth=3)
 
-    # Predictions on the original 1–4 scales, family SES at mean (z = 0)
-    x_raw = np.linspace(1, 4, 200)
-    sel_mean, sel_sd = d["selective_presentation_score"].agg(["mean", "std"])
-    y_mean, y_sd = d[y].agg(["mean", "std"])
-    x_z = (x_raw - sel_mean) / sel_sd
+        # Unadjusted weighted means at each gap value
+        obs = (
+            d.groupby("gap_size")
+            .apply(lambda g: pd.Series({
+                "mean": np.average(g[out["var"]], weights=g["HOUWGT"]),
+                "n": len(g),
+            }), include_groups=False)
+        )
+        obs = obs[obs["n"] >= FIG3_MIN_N_DOT]
+        ax.scatter(obs.index, obs["mean"], s=30, color=out["color"],
+                   alpha=0.55, edgecolor="white", linewidth=0.8, zorder=3)
 
-    preds = {
-        "Male": y_mean + (b["Intercept"] + slope_m * x_z) * y_sd,
-        "Female": y_mean + (b["Intercept"] + b["female"] + slope_f * x_z) * y_sd,
-    }
-    slopes = {"Male": slope_m, "Female": slope_f}
-    styles = {"Male": "-", "Female": "--"}
+        b = m_std.params["gap_size"]
+        p = m_std.pvalues["gap_size"]
+        end_labels.append((
+            pred["mean"].iloc[-1],
+            f"{out['name']}: β = {fmt_beta(b)}, {fmt_p(p)}",
+            out["color"],
+        ))
 
-    # --------------------------------------------------------
-    # Plot (Figure 1 style)
-    # --------------------------------------------------------
-    fig, ax = plt.subplots(figsize=(9, 6))
+    ax.set_xlim(0, 3)
+    ax.set_xticks(np.arange(0, 3.01, 0.5))
+    ax.set_xticklabels(["0\n(equal)", "0.5", "1", "1.5", "2", "2.5", "3"])
+    ax.set_ylim(0, 5)
+    ax.set_yticks(np.arange(0, 5.01, 0.5))
 
-    for g in ["Male", "Female"]:
-        ax.plot(x_raw, preds[g], linewidth=3, linestyle=styles[g],
-                color=spec["colors"][g], label=g)
-
-    ax.set_xlim(1, 4)
-    ax.set_xticks(np.arange(1, 4.01, 0.5))
-    ax.set_xticklabels(["1\nLow", "1.5", "2", "2.5", "3", "3.5", "4\nHigh"])
-    ax.set_ylim(1, 4)
-    ax.set_yticks(np.arange(1, 4.01, 0.5))
-
-    ax.set_xlabel("Selective Positive Self-presentation", fontsize=12)
-    ax.set_ylabel(f"Model-estimated {spec['kind']} Positive Self-image",
-                  fontsize=12)
-    ax.set_title(f"Selective Self-presentation and {spec['kind']} "
-                 f"Positive Self-image:\nBoys vs. Girls",
+    ax.set_xlabel(spec["xlabel"], fontsize=12)
+    ax.set_ylabel("Model-estimated Outcome Score (original scale)", fontsize=12)
+    ax.set_title(spec["title"] + "\nand Three Psychological Outcomes",
                  fontsize=14, pad=12)
 
-    # Simple-slope labels: upper line labelled above, lower line below,
-    # stacked above if the lower label would leave the plot.
-    span = x_raw >= 3.05
-    segs = {g: preds[g][span] for g in preds}
-    upper = max(segs, key=lambda g: segs[g].mean())
-    lower = "Female" if upper == "Male" else "Male"
-    pad = 0.07 * 3
-    pos = {upper: segs[upper].max() + pad, lower: segs[lower].min() - pad}
-    if abs(pos[upper] - pos[lower]) < 1.3 * pad:
-        pos[upper] = pos[lower] + 1.3 * pad
-    if pos[lower] < 1 + 0.6 * pad:
-        pos[lower] = segs[upper].max() + pad
-        pos[upper] = pos[lower] + 1.3 * pad
+    # Labels in the right margin at the end of each line,
+    # sorted by height and pushed apart so they never overlap.
+    min_gap = 0.25
+    end_labels.sort(key=lambda t: t[0])
+    label_y = [t[0] for t in end_labels]
+    for i in range(1, len(label_y)):
+        label_y[i] = max(label_y[i], label_y[i - 1] + min_gap)
+    overflow = label_y[-1] - 4.95
+    if overflow > 0:
+        label_y = [v - overflow for v in label_y]
+        for i in range(len(label_y) - 2, -1, -1):
+            label_y[i] = min(label_y[i], label_y[i + 1] - min_gap)
 
-    for g in ["Male", "Female"]:
-        ax.text(3.05, pos[g], f"{g}: β = {fmt_beta(slopes[g])}",
-                color=spec["colors"][g], fontsize=11, fontweight="bold",
-                ha="left", va="center",
-                bbox=dict(facecolor="white", edgecolor="none",
-                          alpha=0.85, pad=3))
+    for (y_end, text, color), y_lab in zip(end_labels, label_y):
+        ax.annotate(
+            text, xy=(3, y_end), xytext=(3.08, y_lab),
+            textcoords="data", annotation_clip=False,
+            color=color, fontsize=10.5, fontweight="bold",
+            ha="left", va="center",
+            arrowprops=dict(arrowstyle="-", color=color, lw=0.8,
+                            shrinkA=0, shrinkB=2),
+        )
 
-    # Interaction test, bottom right
-    ax.text(3.95, 1.12,
-            f"Gender × Selective presentation: "
-            f"β = {fmt_beta(b[inter])}, {fmt_p(p_inter)}",
-            fontsize=10, color="dimgray", ha="right", va="center")
+    # Legend for marks only (outcomes are named by the end labels)
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    mark_handles = [
+        Line2D([0], [0], color="dimgray", lw=3, label="Model-estimated value"),
+        Patch(facecolor="dimgray", alpha=0.2, label="95% CI"),
+        Line2D([0], [0], marker="o", color="none", markerfacecolor="dimgray",
+               markeredgecolor="white", alpha=0.6, markersize=7,
+               label="Observed weighted mean"),
+    ]
+    ax.legend(handles=mark_handles, frameon=False, loc="upper left")
 
-    ax.legend(frameon=False, loc="upper left")
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.grid(axis="y", linestyle=":", alpha=0.25)
 
+    n_dir = (subset["gap_group"] == spec["direction"]).sum()
+    n_eq = (subset["gap_group"] == "Equal").sum()
+    fig.text(
+        0.01, -0.01,
+        f"Note. Sample = students with equal online/offline self-image (gap = 0, n = {n_eq:,}) "
+        f"plus students in the {spec['direction']} group (n = {n_dir:,}).\n"
+        "Lines are model-estimated values from weighted (HOUWGT) regressions with school-clustered SEs, "
+        "controlling for overall self-image level\n"
+        "[(online + offline) / 2], gender and family SES (held at sample means). "
+        f"Dots = unadjusted weighted means at each gap value (n \u2265 {FIG3_MIN_N_DOT}).\n"
+        "Outcomes use different scales (self-esteem 1–4; well-being and depressive symptoms 0–5), "
+        "so compare slopes rather than line heights.\n"
+        "Higher depressive-symptom scores indicate worse mental health. "
+        "β = change in the standardized outcome per 1-point gap.",
+        fontsize=9, color="dimgray", ha="left", va="top",
+    )
+
     plt.tight_layout()
     plt.savefig(spec["file"], dpi=300, bbox_inches="tight")
     plt.show()
-
-
-for spec in fig3_specs:
-    draw_figure3(spec)
