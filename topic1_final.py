@@ -98,9 +98,10 @@ for col in questionnaire_vars:
         topic1[col]>=0 #負數->NaN;0以上先保留 
         #depression variable 有合法的0
     )
-print(
-        "Negative questionaire values remaining:",
-        (topic1[questionnaire_vars]<0).sum().sum()
+
+for col in depression_vars+wellbeing_vars:
+    topic1[col]=topic1[col].where(
+        topic1[col].between(0,4)
     )
 
 #5. Clean Background and survey variables

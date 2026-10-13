@@ -1798,7 +1798,7 @@ for name, outcome in psych_outcomes.items():
 # ============================================================
 
 topic1["online_self_image_reduced"] = (
-    topic1[["bs25a", "bs25c"]].mean(axis=1)
+    topic1[["bs25a", "bs25c"]].mean(axis=1, skipna=False)
 )
 
 print("\nReduced Online Self-image:")
@@ -1871,7 +1871,7 @@ print("R² =", round(model.rsquared, 4))
 # ============================================================
 
 topic1["selective_presentation_reduced"] = (
-    topic1[["bs23a", "bs23b"]].mean(axis=1)
+    topic1[["bs23a", "bs23b"]].mean(axis=1, skipna=False)
 )
 
 print("\nReduced Selective Presentation:")
